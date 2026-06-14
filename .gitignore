@@ -41,6 +41,9 @@ secrets.properties
 # Reference material (not part of source, very large)
 参考项目文件/
 
+# Dev specs / planning notes (开发内容，不随成品发布)
+.kiro/
+
 # JVM crash dumps
 hs_err_pid*.log
 replay_pid*.log
