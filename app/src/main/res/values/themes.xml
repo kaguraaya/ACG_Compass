@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Base application theme. The real visual identity is supplied by Jetpack Compose
+        (Material 3 + dynamic color) in core/designsystem. This XML theme only provides a
+        clean launch surface and inherits a Material 3 DayNight parent so dark mode is honored
+        before Compose draws (RC.03.05 / RC.03.08).
+    -->
+    <style name="Theme.AcgCompass" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

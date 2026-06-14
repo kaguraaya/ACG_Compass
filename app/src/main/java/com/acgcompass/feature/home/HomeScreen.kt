@@ -1,0 +1,447 @@
+package com.acgcompass.feature.home
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.outlined.Inbox
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.acgcompass.core.designsystem.AcgCompassTheme
+import com.acgcompass.core.designsystem.WorkCard
+import com.acgcompass.core.designsystem.WorkCardUiModel
+import com.acgcompass.core.ui.AcgTopLevelTopBar
+import com.acgcompass.core.ui.ScreenContentPadding
+import com.acgcompass.core.ui.StateScaffold
+import com.acgcompass.core.ui.UiState
+
+private const val HOME_MOD_TODAY = "today_decision"
+private const val HOME_MOD_SEASONAL = "seasonal_hot"
+private const val HOME_MOD_BACKLOG = "backlog_overview"
+private const val HOME_MOD_CONTINUE = "continue"
+private const val HOME_MOD_SYNC = "sync_reminder"
+private const val HOME_MOD_DRAW = "daily_draw"
+
+/**
+ * 首页路由入口（RC.04）。连接 [HomeViewModel] 并把状态与导航回调下发给无状态 [HomeScreen]。
+ *
+ * @param onOpenRecommender 进入「今晚看什么」推荐器（RC.04.01）。
+ * @param onOpenSearch 进入搜索（首页顶部搜索入口）。
+ * @param onOpenImport 进入批量导入（补番收纳箱）。
+ * @param onOpenWork 进入指定作品详情。
+ */
+@Composable
+fun HomeRoute(
+    onOpenRecommender: () -> Unit,
+    onOpenSearch: () -> Unit,
+    onOpenImport: () -> Unit,
+    onOpenWork: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    onOpenSettings: () -> Unit = {},
+    onOpenHomeModules: () -> Unit = {},
+    viewModel: HomeViewModel = hiltViewModel(),
+) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val syncMessage by viewModel.syncMessage.collectAsStateWithLifecycle()
+    val needsConfig by viewModel.needsBangumiConfig.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    androidx.compose.runtime.LaunchedEffect(syncMessage) {
+        syncMessage?.let {
+            android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_LONG).show()
+            viewModel.clearSyncMessage()
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(needsConfig) {
+        if (needsConfig) {
+            onOpenSettings()
+            viewModel.clearNeedsBangumiConfig()
+        }
+    }
+    HomeScreen(
+        state = state,
+        onMoodSelected = viewModel::onMoodSelected,
+        onManualSync = viewModel::onManualSync,
+        onOpenRecommender = onOpenRecommender,
+        onOpenSearch = onOpenSearch,
+        onOpenImport = onOpenImport,
+        onOpenWork = onOpenWork,
+        onOpenHomeModules = onOpenHomeModules,
+        modifier = modifier,
+    )
+}
+
+/**
+ * 无状态首页（Material 3，RC.04）。今日决策中心：今晚看什么大卡、今日状态、继续看/读/玩、
+ * 待补池概览、搜索与导入入口。空态由 [StateScaffold] 渲染导入引导。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HomeScreen(
+    state: UiState<HomeUiState>,
+    onMoodSelected: (HomeMood) -> Unit,
+    onManualSync: () -> Unit,
+    onOpenRecommender: () -> Unit,
+    onOpenSearch: () -> Unit,
+    onOpenImport: () -> Unit,
+    onOpenWork: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    onOpenHomeModules: () -> Unit = {},
+) {
+    Scaffold(
+        modifier = modifier.fillMaxSize(),
+        contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
+        topBar = {
+            AcgTopLevelTopBar(
+                title = "首页",
+                actions = {
+                    IconButton(onClick = onOpenHomeModules) {
+                        Icon(Icons.Filled.Tune, contentDescription = "首页模块设置")
+                    }
+                    IconButton(onClick = onOpenSearch) {
+                        Icon(Icons.Filled.Search, contentDescription = "搜索")
+                    }
+                    IconButton(onClick = onOpenImport) {
+                        Icon(Icons.Outlined.Inbox, contentDescription = "批量导入")
+                    }
+                },
+            )
+        },
+    ) { innerPadding ->
+        StateScaffold(
+            state = state,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+            onCta = { onOpenImport() },
+        ) { data ->
+            HomeContent(
+                data = data,
+                onMoodSelected = onMoodSelected,
+                onManualSync = onManualSync,
+                onOpenRecommender = onOpenRecommender,
+                onOpenWork = onOpenWork,
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun HomeContent(
+    data: HomeUiState,
+    onMoodSelected: (HomeMood) -> Unit,
+    onManualSync: () -> Unit,
+    onOpenRecommender: () -> Unit,
+    onOpenWork: (String) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        // F1：父级已消费标题栏 innerPadding；顶部 16dp 呼吸 + 底部 96dp 保证末项不被底栏遮挡（顶层页）。
+        contentPadding = PaddingValues(
+            start = ScreenContentPadding.Horizontal,
+            end = ScreenContentPadding.Horizontal,
+            top = ScreenContentPadding.Top,
+            bottom = ScreenContentPadding.Bottom,
+        ),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        // 今晚看什么大卡（RC.04.01）。
+        if (HOME_MOD_TODAY in data.enabledModules) {
+            item(key = "hero") {
+                TonightHeroCard(onClick = onOpenRecommender)
+            }
+
+            // 今日状态选择（RC.04.02）。
+            item(key = "moods") {
+                SectionTitle("今日状态")
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    data.moods.forEach { mood ->
+                        FilterChip(
+                            selected = data.selectedMood == mood,
+                            onClick = { onMoodSelected(mood) },
+                            label = { Text(mood.label) },
+                        )
+                    }
+                }
+            }
+        }
+
+        // F11：近期热门 / 本季（公共发现池）。
+        if (HOME_MOD_SEASONAL in data.enabledModules) {
+            item(key = "seasonal_title") { SectionTitle("近期热门 / 本季") }
+            if (data.seasonalHot.isEmpty()) {
+                item(key = "seasonal_empty") {
+                    HintText("正在准备本季热门，稍后回来看看；也可在「发现 → 本季榜单」查看公共榜单")
+                }
+            } else {
+                items(data.seasonalHot, key = { "seasonal_${it.workId}" }) { card ->
+                    WorkCard(model = card.card, onClick = { onOpenWork(card.workId) })
+                }
+            }
+        }
+
+        // 继续看 / 读 / 玩（RC.04.03）。
+        if (HOME_MOD_CONTINUE in data.enabledModules) {
+            item(key = "continue") {
+                SectionTitle("继续看 / 读 / 玩")
+            }
+            if (data.continueItems.isEmpty()) {
+                item(key = "continue_empty") {
+                    HintText("暂无进行中的作品，去待补池挑一部开始吧")
+                }
+            } else {
+                items(data.continueItems, key = { "continue_${it.workId}" }) { item ->
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        WorkCard(model = item.card, onClick = { onOpenWork(item.workId) })
+                        val progress = listOfNotNull(item.progressText, item.nextUpText)
+                        if (progress.isNotEmpty()) {
+                            HintText(progress.joinToString(separator = " · "))
+                        }
+                    }
+                }
+            }
+        }
+
+        // 待补池概览（RC.04.04）。
+        if (HOME_MOD_BACKLOG in data.enabledModules) {
+            item(key = "backlog_overview") {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    SectionTitle("待补池概览 · 共 ${data.backlogSummary.totalCount} 部")
+                    HintText("快速一览；完整筛选 / 排序 / 批量管理请到「待补池」标签页")
+                }
+            }
+            data.backlogSummary.recentlyAdded?.let { card ->
+                item(key = "recent_${card.workId}") {
+                    LabeledWorkCard("最近加入", card.card) { onOpenWork(card.workId) }
+                }
+            }
+            data.backlogSummary.longestDust?.let { card ->
+                item(key = "dust_${card.workId}") {
+                    LabeledWorkCard("吃灰最久", card.card) { onOpenWork(card.workId) }
+                }
+            }
+            if (data.backlogSummary.shortPickable.isNotEmpty()) {
+                item(key = "short_title") { SubSectionTitle("短篇可补") }
+                items(data.backlogSummary.shortPickable, key = { "short_${it.workId}" }) { card ->
+                    WorkCard(model = card.card, onClick = { onOpenWork(card.workId) })
+                }
+            }
+        }
+
+        // 同步提醒（RC.04.05）。仅在至少配置一个可同步源时展示。
+        if (HOME_MOD_SYNC in data.enabledModules) {
+            data.syncReminder?.let { reminder ->
+                item(key = "sync_reminder") {
+                    SyncReminderCard(reminder = reminder, onManualSync = onManualSync)
+                }
+            }
+        }
+
+        // 今日补番签（RC.04.06）。
+        if (HOME_MOD_DRAW in data.enabledModules) {
+            data.dailyDraw?.let { draw ->
+                item(key = "daily_draw") {
+                    DailyDrawCard(draw = draw)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SyncReminderCard(
+    reminder: SyncReminder,
+    onManualSync: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = if (reminder.hasFailure) {
+            CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer,
+                contentColor = MaterialTheme.colorScheme.onErrorContainer,
+            )
+        } else {
+            CardDefaults.cardColors()
+        },
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SectionTitle(if (reminder.hasFailure) "同步提醒 · 有源测试失败" else "同步提醒")
+            reminder.lines.forEach { line ->
+                val prefix = if (line.failed) "⚠ " else ""
+                HintText("$prefix${line.sourceLabel} · ${line.statusText}")
+            }
+            TextButton(onClick = onManualSync) {
+                Text("立即同步")
+            }
+        }
+    }
+}
+
+@Composable
+private fun DailyDrawCard(draw: DailyDraw) {
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        ),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "今日补番签",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = "宜 · ${draw.shouldText}",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                text = "忌 · ${draw.shouldNotText}",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+    }
+}
+
+@Composable
+private fun TonightHeroCard(onClick: () -> Unit) {
+    ElevatedCard(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        ),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "今晚看什么？",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = "告诉我你的时间与心情，从待补池里帮你挑一部",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            TextButton(onClick = onClick) {
+                Text("开始决策")
+            }
+        }
+    }
+}
+
+@Composable
+private fun LabeledWorkCard(
+    label: String,
+    model: WorkCardUiModel,
+    onClick: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        SubSectionTitle(label)
+        WorkCard(model = model, onClick = onClick)
+    }
+}
+
+@Composable
+private fun SectionTitle(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.Bold,
+    )
+}
+
+@Composable
+private fun SubSectionTitle(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+@Composable
+private fun HintText(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun HomeScreenPreview() {
+    AcgCompassTheme {
+        HomeScreen(
+            state = UiState.Success(
+                HomeUiState(
+                    backlogSummary = BacklogSummary(totalCount = 3),
+                    syncReminder = SyncReminder(
+                        lines = listOf(
+                            SyncReminderLine("Bangumi", "最近同步 · 刚刚", failed = false),
+                            SyncReminderLine("AniList", "尚未同步", failed = false),
+                        ),
+                        hasFailure = false,
+                    ),
+                    dailyDraw = DailyDraw(
+                        shouldText = "补一部短篇，今晚就能看完",
+                        shouldNotText = "忌挑超长篇硬啃，今晚时间不够",
+                    ),
+                ),
+            ),
+            onMoodSelected = {},
+            onManualSync = {},
+            onOpenRecommender = {},
+            onOpenSearch = {},
+            onOpenImport = {},
+            onOpenWork = {},
+        )
+    }
+}

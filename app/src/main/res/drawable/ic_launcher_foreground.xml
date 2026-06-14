@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Simple compass-needle mark for ACG Compass. -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,30 L62,54 L54,78 L46,54 Z" />
+    <path
+        android:fillColor="#7FB3FF"
+        android:pathData="M54,54 m-26,0 a26,26 0 1,0 52,0 a26,26 0 1,0 -52,0 M54,54 m-22,0 a22,22 0 1,1 44,0 a22,22 0 1,1 -44,0 Z" />
+</vector>

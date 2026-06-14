@@ -1,0 +1,276 @@
+package com.acgcompass.data.remote.ai
+
+import com.acgcompass.core.common.AppError
+import com.acgcompass.core.common.AppResult
+import com.acgcompass.core.common.runCatchingApp
+import com.acgcompass.data.remote.ai.prompt.AiTaskSpec
+import com.acgcompass.data.remote.ai.prompt.AiTaskSpecs
+import com.acgcompass.data.remote.ai.prompt.SpoilerGuard
+import com.acgcompass.domain.ai.AiEngine
+import com.acgcompass.domain.ai.AiRunOptions
+import com.acgcompass.domain.ai.AiRunResult
+import com.acgcompass.domain.ai.AiTask
+import com.acgcompass.domain.ai.CostRange
+import com.acgcompass.domain.model.AiGenerator
+import com.acgcompass.domain.model.AiResult
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import java.util.UUID
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlin.math.ceil
+
+/**
+ * [AiEngine] 的生产实现：组装提示词 + schema → 调用 provider → 校验 / 修复 / 低置信兜底 → 剧透过滤
+ * （RC.14.03/04/05/06/07，design「调用管线」）。
+ *
+ * 全程不抛裸异常：所有 provider 调用经 [runCatchingApp] 兜底为领域错误，并映射为 [AiRunResult]
+ * 的相应分支（RC.03.04 / RC.17.4）。未配置凭据（provider 抛 `Unauthorized`）映射为
+ * [AiRunResult.NotConfigured]，供调用方回退本地规则引擎（task 24.1）。
+ */
+@Singleton
+class AiEngineImpl @Inject constructor(
+    private val registry: AiProviderRegistry,
+    private val providerSelector: AiProviderSelector,
+    private val json: Json,
+) : AiEngine {
+
+    override suspend fun <T> run(task: AiTask<T>, options: AiRunOptions): AiRunResult<T> {
+        val spec = AiTaskSpecs.specFor(task)
+
+        // 成本确认（RC.14.05）：未确认则只返回估算，不发起任何请求。
+        if (!options.confirmed) {
+            return AiRunResult.NeedsConfirmation(estimateCost(task, options))
+        }
+
+        val provider = registry.get(providerSelector.selected())
+            ?: return AiRunResult.Failure(AppError.Server(cause = "未注册可用的 AI 服务"))
+
+        val content = prepareContent(task, options)
+
+        // ---- 第一次请求：按「结构化 → JSON 对象 → 纯文本」降级序列尝试（R-new1） ----
+        // 许多 OpenAI 兼容中转站 / 模型（部分 Kimi、DeepSeek 派生模型等）拒绝 response_format
+        // 的 json_schema 甚至 json_object（返回 400），此前会直接失败、模型「无法使用」。
+        val firstRaw = when (val r = requestWithFormatFallback(provider, spec, content, options)) {
+            is ProviderCall.Ok -> r.raw.content
+            is ProviderCall.NotConfigured -> return AiRunResult.NotConfigured
+            is ProviderCall.Error -> return AiRunResult.Failure(r.error)
+        }
+
+        parseValidatedScrubbed(task, firstRaw)?.let { return it }
+
+        // ---- 缺字段 / JSON 损坏 → 「修复成指定格式」二次请求（RC.14.03） ----
+        val repairRaw = when (
+            val r = callProvider(provider, repairRequest(spec, firstRaw, options))
+        ) {
+            is ProviderCall.Ok -> r.raw.content
+            is ProviderCall.NotConfigured -> return AiRunResult.NotConfigured
+            // 修复请求失败：保留首次内容作为低置信兜底（不编造）。
+            is ProviderCall.Error -> return lowConfidence(task, firstRaw, r.error)
+        }
+
+        parseValidatedScrubbed(task, repairRaw)?.let { return it }
+
+        // ---- 仍失败 → 低置信兜底，不编造（RC.14.03/04） ----
+        return lowConfidence(task, repairRaw, AppError.AiMalformed())
+    }
+
+    override fun estimateCost(task: AiTask<*>, options: AiRunOptions): CostRange {
+        val spec = AiTaskSpecs.specFor(task)
+        val content = prepareContent(task, options)
+        val inputChars = spec.systemPrompt.length + content.length
+        // CJK 偏多：保守按 ~2 字符/token（高估）与 ~4 字符/token（低估）给出区间，不臆造货币定价。
+        val minInputTokens = inputChars / HIGH_CHARS_PER_TOKEN
+        val maxInputTokens = ceil(inputChars.toDouble() / LOW_CHARS_PER_TOKEN).toInt()
+        val outTokens = options.maxOutputTokens ?: spec.maxOutputTokens
+        return CostRange(
+            minTokens = minInputTokens + outTokens / 4,
+            maxTokens = maxInputTokens + outTokens,
+            summaryOnlyAvailable = task is AiTask.SpoilerRadar && task.summarizable,
+        )
+    }
+
+    // ---- 内部：输入准备 ----
+
+    /** 「仅分析摘要」时截断超长输入以降本（RC.14.05）。 */
+    private fun prepareContent(task: AiTask<*>, options: AiRunOptions): String {
+        val raw = task.userContent
+        if (!options.analyzeSummariesOnly || raw.length <= SUMMARY_CHAR_LIMIT) return raw
+        return raw.take(SUMMARY_CHAR_LIMIT) + "\n…（已截断，仅分析摘要）"
+    }
+
+    private fun firstRequest(
+        spec: AiTaskSpec,
+        content: String,
+        options: AiRunOptions,
+        format: AiResponseFormat = spec.responseFormat,
+    ) =
+        AiRequest(
+            systemPrompt = spec.systemPrompt,
+            userContent = content,
+            model = options.model.orEmpty(),
+            temperature = options.temperature,
+            responseFormat = format,
+            maxTokens = options.maxOutputTokens ?: spec.maxOutputTokens,
+        )
+
+    /**
+     * R-new1：按「spec 指定格式 → json_object → 纯文本」降级序列发起首个请求。
+     *
+     * 仅在错误「可能由输出格式不被支持」（Server/AiMalformed/FieldMissing，多为 400）时才降级重试；
+     * 鉴权 / 限流 / 网络类错误立即返回，不浪费额度。
+     */
+    private suspend fun requestWithFormatFallback(
+        provider: AiProvider,
+        spec: AiTaskSpec,
+        content: String,
+        options: AiRunOptions,
+    ): ProviderCall {
+        val formats = listOf(spec.responseFormat, AiResponseFormat.JsonObject, AiResponseFormat.Text).distinct()
+        var lastError: ProviderCall.Error? = null
+        for (format in formats) {
+            when (val r = callProvider(provider, firstRequest(spec, content, options, format))) {
+                is ProviderCall.Ok -> return r
+                is ProviderCall.NotConfigured -> return r
+                is ProviderCall.Error -> {
+                    if (!isFormatNegotiable(r.error)) return r
+                    lastError = r
+                }
+            }
+        }
+        return lastError ?: ProviderCall.Error(AppError.Server())
+    }
+
+    /** 该错误是否可能由「输出格式 / response_format 不被支持」引起，从而值得降级重试（R-new1）。 */
+    private fun isFormatNegotiable(error: AppError): Boolean = when (error) {
+        is AppError.Server, is AppError.AiMalformed, is AppError.FieldMissing -> true
+        else -> false
+    }
+
+    private fun repairRequest(spec: AiTaskSpec, malformed: String, options: AiRunOptions) =
+        AiRequest(
+            systemPrompt = AiTaskSpecs.repairPrompt(spec.systemPrompt),
+            userContent = buildString {
+                appendLine("请把下面的内容修复为符合要求的合法 JSON（仅输出 JSON 本身）：")
+                append(malformed)
+            },
+            model = options.model.orEmpty(),
+            temperature = options.temperature,
+            // 修复时强制 JSON 对象输出（兼容不支持 json_schema 的端点）。
+            responseFormat = AiResponseFormat.JsonObject,
+            maxTokens = options.maxOutputTokens ?: spec.maxOutputTokens,
+        )
+
+    // ---- 内部：provider 调用与错误归一 ----
+
+    private sealed interface ProviderCall {
+        data class Ok(val raw: AiRawResponse) : ProviderCall
+        data object NotConfigured : ProviderCall
+        data class Error(val error: AppError) : ProviderCall
+    }
+
+    private suspend fun callProvider(provider: AiProvider, req: AiRequest): ProviderCall =
+        when (val result = runCatchingApp { provider.complete(req) }) {
+            is AppResult.Success -> ProviderCall.Ok(result.data)
+            is AppResult.Failure ->
+                // 未配置 / 凭据无效 → 让调用方回退本地规则引擎（RC.00 1.3 / RC.14.01）。
+                if (result.error is AppError.Unauthorized) {
+                    ProviderCall.NotConfigured
+                } else {
+                    ProviderCall.Error(result.error)
+                }
+        }
+
+    // ---- 内部：校验 + 剧透过滤 + 解析 ----
+
+    /**
+     * 对 [rawContent] 做：JSON 抽取 → 合法性 / 必需字段校验 → 剧透过滤 post-pass → 强类型解析。
+     *
+     * @return 成功时返回 [AiRunResult.Success]；任一步失败返回 `null`（由调用方触发修复 / 兜底）。
+     */
+    private fun <T> parseValidatedScrubbed(task: AiTask<T>, rawContent: String): AiRunResult.Success<T>? {
+        val jsonText = extractJsonObjectText(rawContent)
+        val element = runCatching { json.parseToJsonElement(jsonText) }.getOrNull() ?: return null
+        val obj = element as? JsonObject ?: return null
+        if (!hasAllRequired(obj, task.requiredFields)) return null
+
+        // 剧透过滤：净化所有字符串叶子后再解析（RC.14.04，支撑 Property 12）。
+        val scrubbed = SpoilerGuard.scrubJson(obj)
+        val scrubbedText = json.encodeToString(JsonElement.serializer(), scrubbed)
+        val payload = runCatching { json.decodeFromString(task.serializer, scrubbedText) }
+            .getOrNull() ?: return null
+
+        return AiRunResult.Success(
+            payload = payload,
+            result = aiResult(
+                task = task,
+                payloadJson = scrubbedText,
+                confidence = extractConfidence(scrubbed),
+            ),
+        )
+    }
+
+    /** [parseValidatedScrubbed] 的占位重载，避免误用：始终返回 null（保留可读的两段式调用）。 */
+    private fun <T> parseValidatedScrubbed(task: AiTask<T>): AiRunResult.Success<T>? = null
+
+    private fun <T> lowConfidence(
+        task: AiTask<T>,
+        lastRaw: String,
+        error: AppError,
+    ): AiRunResult.LowConfidence {
+        // 不编造：保留最后一次原始内容（已做剧透过滤），置信度 0。
+        val safeText = SpoilerGuard.scrubText(lastRaw)
+        return AiRunResult.LowConfidence(
+            result = aiResult(task = task, payloadJson = safeText, confidence = 0f),
+            error = error,
+        )
+    }
+
+    private fun <T> aiResult(task: AiTask<T>, payloadJson: String, confidence: Float): AiResult =
+        AiResult(
+            id = UUID.randomUUID().toString(),
+            workId = task.workId,
+            taskType = task.type,
+            generator = AiGenerator.AI,
+            payloadJson = payloadJson,
+            confidence = confidence,
+            dataSources = task.dataSources,
+            generatedAt = System.currentTimeMillis(),
+        )
+
+    private fun hasAllRequired(obj: JsonObject, required: List<String>): Boolean =
+        required.all { key ->
+            val value = obj[key]
+            value != null && value != JsonNull
+        }
+
+    private fun extractConfidence(element: JsonElement): Float {
+        val obj = element as? JsonObject ?: return 0f
+        val raw = (obj["confidence"] as? JsonPrimitive)?.content
+        return raw?.toFloatOrNull()?.coerceIn(0f, 1f) ?: 0f
+    }
+
+    /**
+     * 从模型输出中抽取 JSON 对象文本：剥离 Markdown 代码围栏与前后说明，截取首个 `{` 到末个 `}`。
+     * 抽取失败时原样返回（后续解析会判定为非法 → 触发修复）。
+     */
+    private fun extractJsonObjectText(raw: String): String {
+        val start = raw.indexOf('{')
+        val end = raw.lastIndexOf('}')
+        return if (start in 0 until end) raw.substring(start, end + 1) else raw
+    }
+
+    private companion object {
+        /** 「仅分析摘要」时的输入字符上限（RC.14.05）。 */
+        const val SUMMARY_CHAR_LIMIT = 1200
+
+        /** token 估算：低估档（字符/ token）。 */
+        const val LOW_CHARS_PER_TOKEN = 2
+
+        /** token 估算：高估档（字符/ token）。 */
+        const val HIGH_CHARS_PER_TOKEN = 4
+    }
+}
