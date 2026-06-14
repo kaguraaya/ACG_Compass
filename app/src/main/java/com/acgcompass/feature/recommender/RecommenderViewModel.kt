@@ -183,6 +183,16 @@ class RecommenderViewModel @Inject constructor(
         val wantsAcclaimed = MoodOption.MASTERPIECE in selectedMoods || MoodOption.SHOCKED in selectedMoods
         val wantsShort = MoodOption.SHORT in selectedMoods
 
+        // P0-4：接受程度 → 容忍/硬排除关键词。「可X」把对应题材移出冲突集（即便选了放松向也容忍）；
+        // 「不要X」作为硬排除（不要太累→烧脑/上头；不要未完结→未完结作品）。
+        val toleratedKeywords = input.acceptances.flatMap { ACCEPTANCE_TOLERATE[it].orEmpty() }.toSet()
+        val hardExcludeKeywords = input.acceptances.flatMap { ACCEPTANCE_EXCLUDE[it].orEmpty() }.toSet()
+        val excludeUnfinished = AcceptanceOption.NO_UNFINISHED in input.acceptances
+        val moodSelected = moodKeywords.isNotEmpty()
+        // P0-4 冲突集：仅放松向时排除强烈/沉重题材，扣除用户明确容忍的；任何时候叠加「不要X」硬排除。
+        val conflictKeywords: Set<String> =
+            ((if (onlyRelaxing) INTENSE_KEYWORDS.toSet() else emptySet()) - toleratedKeywords) + hardExcludeKeywords
+
         data class Scored(
             val work: Work,
             val genre: Float,
@@ -197,18 +207,26 @@ class RecommenderViewModel @Inject constructor(
                     // Q3：期末保护模式——排除长篇/未完结/高耗能（致郁·上头·烧脑）。
                     (!input.finalsProtectionMode || passesFinalsProtection(w))
             }
-            .map { w ->
+            .mapNotNull { w ->
                 val tagNames = w.tags.map { it.name }
                 val tagLower = tagNames.map { it.lowercase() }
+                // P0-4 硬排除：未完结（不要未完结）/ 含「不要X」关键词的作品直接淘汰。
+                if (excludeUnfinished && w.status != com.acgcompass.domain.model.ReleaseStatus.FINISHED) {
+                    return@mapNotNull null
+                }
+                if (hardExcludeKeywords.isNotEmpty() &&
+                    tagNames.any { t -> hardExcludeKeywords.any { t.contains(it) } }
+                ) {
+                    return@mapNotNull null
+                }
                 // 题材正分：作品标签命中所选心情关键词。
                 val matched = tagNames.filter { t -> moodKeywords.any { k -> t.contains(k) } }
+                // 冲突标签数：与所选心情相斥的强烈/沉重题材（已扣除容忍项）。
+                val conflicts = tagNames.count { t -> conflictKeywords.any { k -> t.contains(k) } }
+                // P0-4 心情硬筛：选了心情 → 必须命中至少一个心情关键词，且不含冲突标签；否则淘汰，
+                // 不给「想看轻松」的人推「胃疼/致郁」作品（不足时上层返回空态提示放宽）。
+                if (moodSelected && (matched.isEmpty() || conflicts > 0)) return@mapNotNull null
                 val positive = matched.size.toFloat()
-                // 冲突负分：仅放松向时，强冲突标签重罚。
-                val conflicts = if (onlyRelaxing) {
-                    tagNames.count { t -> INTENSE_KEYWORDS.any { k -> t.contains(k) } }
-                } else {
-                    0
-                }
                 var genre = positive * 3f - conflicts * 4f
                 // 短篇偏好：集数 ≤ 13 或今晚可看完加分。
                 if (wantsShort) {
@@ -226,12 +244,11 @@ class RecommenderViewModel @Inject constructor(
             }
             .toList()
 
-        // 仅放松向时，过滤强冲突作品（genre 明显为负），避免推荐进击的巨人这类。
-        val genreFiltered = if (onlyRelaxing) {
-            scoredList.filter { it.genre >= 0f }.ifEmpty { scoredList }
-        } else {
-            scoredList
-        }
+        // P0-4：心情/接受程度为硬性筛选——筛完无候选则返回空态，提示放宽条件（不硬塞不相干作品）。
+        if (scoredList.isEmpty()) return UiState.Empty(NO_CANDIDATE_CTA)
+
+        // 硬筛已在上方完成（心情命中 + 冲突/未完结/不要X 排除），此处直接进入评分融合。
+        val genreFiltered = scoredList
 
         // 融入社区评分（仅读本地缓存，不联网）。Q2：用**评分人数加权的贝叶斯均分**——人数少的高分被拉回
         // 先验（6.5），避免推荐「高分但没几个人评的奇怪番」；题材/口味权重 > 绝对分（推适合自己而非最高分）。
@@ -399,6 +416,18 @@ class RecommenderViewModel @Inject constructor(
         val INTENSE_KEYWORDS: List<String> = listOf(
             "热血", "战斗", "打斗", "血腥", "猎奇", "致郁", "黑暗", "残酷", "战争",
             "军事", "巨人", "恐怖", "惊悚", "暗黑", "复仇", "政治", "悲剧", "杀戮", "末日",
+        )
+
+        /** P0-4：接受程度「可X」→ 容忍的题材关键词（从冲突集中移除，即便选了放松向也不排除）。 */
+        val ACCEPTANCE_TOLERATE: Map<AcceptanceOption, List<String>> = mapOf(
+            AcceptanceOption.DEPRESSING to listOf("致郁", "虐", "悲剧", "黑暗", "刀"),
+            AcceptanceOption.SLOW_BURN to listOf("慢热"),
+            AcceptanceOption.SHIPPING_WAR to listOf("党争", "后宫"),
+        )
+
+        /** P0-4：接受程度「不要X」→ 硬排除的题材关键词（不要太累→烧脑/上头/意识流/电波）。 */
+        val ACCEPTANCE_EXCLUDE: Map<AcceptanceOption, List<String>> = mapOf(
+            AcceptanceOption.NO_TIRING to listOf("烧脑", "上头", "意识流", "电波"),
         )
     }
 }
