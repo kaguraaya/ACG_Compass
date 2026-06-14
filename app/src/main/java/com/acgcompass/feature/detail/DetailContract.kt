@@ -780,18 +780,18 @@ private fun Work.toTasteMatch(tasteProfile: TasteProfile?, ratings: RatingAggreg
     val highHits = workTagNames.count { it in highScoreTags }
     val lowHits = workTagNames.count { it in lowScoreTags }
     // Q16：多维口味匹配模型——更大区分度、不再都聚在 50-70。
-    // 维度 1 题材契合：作品中「你高分常见标签」的覆盖率（强力拉升），命中低分标签下压。
+    // 维度 1 题材契合（长期口味·主导）：作品中「你高分常见标签」的覆盖率（强力拉升），命中低分标签下压。
     val effectiveTags = minOf(workTagNames.size, 6).coerceAtLeast(1)
     val coverage = (highHits.toFloat() / effectiveTags).coerceIn(0f, 1f)
     val negRatio = (lowHits.toFloat() / effectiveTags).coerceIn(0f, 1f)
-    var genre = 0.45f + coverage * 0.55f - negRatio * 0.5f
+    var genre = 0.4f + coverage * 0.6f - negRatio * 0.55f
     genre = genre.coerceIn(0.05f, 0.98f)
 
-    // 维度 2 社会证明：社区评分（0~10→0~1）。
+    // 维度 2 社会证明：社区评分（0~10→0~1）——P0-3：仅作辅助，低权重（用户诉求：平台评分权重不要太高）。
     val community10 = ratings.representativeScore10()
     val communityNorm = community10?.let { (it / 10f).coerceIn(0f, 1f) }
 
-    // 维度 3 评分习惯：相对你的平均分越高越对味（你给高分的作品类型）。
+    // 维度 3 评分习惯（长期口味）：相对你的平均分越高越对味（你给高分的作品类型）。
     val userAvg = tasteProfile.avgScore.takeIf { it > 0f }
     val habitAdj = if (community10 != null && userAvg != null) {
         ((community10 - userAvg) / 10f).coerceIn(-0.15f, 0.15f)
@@ -799,30 +799,47 @@ private fun Work.toTasteMatch(tasteProfile: TasteProfile?, ratings: RatingAggreg
         0f
     }
 
-    // 综合：题材为主（0.6）+ 社区（0.3）+ 评分习惯微调（0.1 当量）。无社区评分时题材占 0.85。
-    val fraction = if (communityNorm != null) {
-        (genre * 0.6f + communityNorm * 0.3f + (0.5f + habitAdj) * 0.1f).coerceIn(0.05f, 0.98f)
+    // P0-3 综合：长期口味为主（题材 0.75 + 评分习惯 0.1 = 0.85），平台评分仅辅助（0.15）。无社区评分时题材占 0.9。
+    var fraction = if (communityNorm != null) {
+        (genre * 0.75f + communityNorm * 0.15f + (0.5f + habitAdj) * 0.1f).coerceIn(0.05f, 0.98f)
     } else {
-        (genre * 0.85f + 0.075f).coerceIn(0.05f, 0.98f)
+        (genre * 0.9f + 0.05f).coerceIn(0.05f, 0.98f)
     }
+
+    // P0-3 低置信处理：口味画像样本不足（confidence < 0.3）时，把匹配度向中性 0.5 收缩，避免低样本给出
+    // 过度自信的高/低分；并在定性与理由中明确告知置信度低（用户诉求：数据不足时明确告知）。
+    val profileConfidence = tasteProfile.confidence.coerceIn(0f, 1f)
+    val lowConfidence = profileConfidence < 0.3f
+    if (lowConfidence) {
+        fraction = (0.5f + (fraction - 0.5f) * 0.6f).coerceIn(0.05f, 0.98f)
+    }
+
     val matchedHighTags = tags.map { it.name }.filter { it.lowercase() in highScoreTags }
+    val matchedLowTags = tags.map { it.name }.filter { it.lowercase() in lowScoreTags }
     val qualitative = when {
         fraction >= 0.7f -> "很可能合你的胃口"
         fraction >= 0.55f -> "可能会喜欢"
         fraction >= 0.4f -> "可能感觉一般"
         else -> "可能不太喜欢"
     }
-    val reason = when {
+    // P0-3 可解释：优先用「命中的高/低分标签」说明（长期口味），社区评分仅作为辅助补充一句。
+    val baseReason = when {
         matchedHighTags.isNotEmpty() ->
-            "命中你高分作品常见标签：${matchedHighTags.take(3).joinToString("、")}" +
-                (community10?.let { "；社区均分 %.1f".format(it) } ?: "")
-        lowHits > 0 -> "含 $lowHits 个你低分作品常见的标签，可能不太合胃口（负信号已加权）"
-        community10 != null -> "与你的标签重合较少，主要参考社区评分 %.1f/10".format(community10)
+            "主要依据你的长期口味：命中你高分作品常见标签「${matchedHighTags.take(3).joinToString("、")}」" +
+                (if (matchedLowTags.isNotEmpty()) "，但也含低分标签「${matchedLowTags.take(2).joinToString("、")}」" else "")
+        matchedLowTags.isNotEmpty() ->
+            "含 ${matchedLowTags.size} 个你低分作品常见的标签「${matchedLowTags.take(3).joinToString("、")}」，可能不太合胃口（负信号已加权）"
+        community10 != null -> "与你的口味标签重合较少，参考社区评分 %.1f/10（仅辅助）".format(community10)
         else -> "与你的口味画像重合较少，仅供参考"
+    }
+    val reason = if (lowConfidence) {
+        "$baseReason。注意：你的口味画像样本较少，置信度低，以上仅供参考"
+    } else {
+        baseReason
     }
     return TasteMatchUiModel.Available(
         percentText = "${(fraction * 100).roundToInt()}%",
-        qualitativeText = qualitative,
+        qualitativeText = if (lowConfidence) "$qualitative（低置信）" else qualitative,
         fraction = fraction,
         reason = reason,
     )

@@ -129,6 +129,10 @@ sealed class AiTask<T>(
         userContent = content,
         dataSources = dataSources,
         serializer = TasteMatchOutput.serializer(),
-        requiredFields = listOf("matchScore", "likedReasons", "riskReasons", "confidence"),
+        // P0-5：只把 matchScore 设为必需字段。此前要求 likedReasons/riskReasons/confidence 全部存在，
+        // 当模型省略空的 riskReasons 或未给 confidence 时，两次解析都判定缺字段 → 低置信兜底「置信度不足，
+        // 不展示」。这三者在 TasteMatchOutput 均有安全默认值（空列表 / 0f），改为可选后绝大多数有效响应
+        // 都能正常展示；真正损坏的输出仍走低置信兜底（不编造）。
+        requiredFields = listOf("matchScore"),
     )
 }

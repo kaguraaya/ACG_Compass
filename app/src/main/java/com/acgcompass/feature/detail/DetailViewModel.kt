@@ -621,7 +621,7 @@ class DetailViewModel @Inject constructor(
                     )
                 }
                 is AiRunResult.LowConfidence ->
-                    AiMatchUi.Error("AI 置信度不足，已回退本地模型估计（见上方「口味匹配度」）")
+                    AiMatchUi.Error("AI 这次未能给出可靠结构化结果，已为你保留上方的本地口味匹配度（基于你的长期口味标签）")
                 is AiRunResult.NotConfigured ->
                     AiMatchUi.NotConfigured("未配置 AI，可使用本地模型估计（见上方「口味匹配度」）")
                 is AiRunResult.NeedsConfirmation ->
