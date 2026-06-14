@@ -519,18 +519,38 @@ class WorkRepositoryImpl @Inject constructor(
             workDao.upsert(refreshed.data.toEntity(createdAt = entity.createdAt, updatedAt = System.currentTimeMillis()))
         }
 
-        // N15：非 Bangumi 主源但已匹配到 Bangumi 链接时，用 Bangumi 中文简介覆盖展示（仅简介，
-        // 不动标题/封面/主源，避免 L9 式错配污染身份）。修复「Jikan 详情简介是英文」。
+        // N15 / P1-1：非 Bangumi 主源但已匹配到 Bangumi 链接时，用 Bangumi 中文内容覆盖展示
+        //（标题 + 简介中文化）。修复「打开是 Jikan 源，标题/简介全是外语」。
+        // 安全前提：交叉验证落的 Bangumi 链接为高置信（≥CROSS_MATCH_THRESHOLD，仅动画、评分人数多），
+        // 故用其中文标题相对安全；原标题保留进 aliases 以免丢失搜索/匹配能力。仅覆盖标题/简介，
+        // 不动封面/主源/媒介，避免错配污染身份（tag 展示在详情页另行处理）。
         if (primary != SourceId.BANGUMI) {
             val bgmLink = sourceLinkDao.getByWork(workId).firstOrNull { it.sourceId == SourceId.BANGUMI.name }
             val bgmSubjectId = bgmLink?.sourceItemId?.toIntOrNull()
             if (bgmSubjectId != null) {
-                val bgm = bangumi.getSubject(bgmSubjectId)
-                val bgmSummary = (bgm as? AppResult.Success)?.data?.summary?.takeIf { it.isNotBlank() }
-                if (bgmSummary != null) {
-                    val cur = workDao.getById(workId)
-                    if (cur != null) {
-                        workDao.upsert(cur.copy(summary = bgmSummary, updatedAt = System.currentTimeMillis()))
+                val bgmWork = (bangumi.getSubject(bgmSubjectId) as? AppResult.Success)?.data
+                val cur = if (bgmWork != null) workDao.getById(workId) else null
+                if (bgmWork != null && cur != null) {
+                    val bgmSummary = bgmWork.summary?.takeIf { it.isNotBlank() }
+                    // Bangumi `toWork` 的 canonical = 中文名 ?: 原名、ja = 原名；故 `canonical != ja`
+                    // 精确表示「该条目存在独立中文名」。仅此前提且与当前标题不同时覆盖标题，原标题并入 aliases。
+                    val bgmTitle = bgmWork.titles.canonical.takeIf {
+                        it.isNotBlank() && it != bgmWork.titles.ja && it != cur.canonicalTitle
+                    }
+                    if (bgmSummary != null || bgmTitle != null) {
+                        workDao.upsert(
+                            cur.copy(
+                                canonicalTitle = bgmTitle ?: cur.canonicalTitle,
+                                titleJa = cur.titleJa ?: bgmWork.titles.ja,
+                                aliases = if (bgmTitle != null) {
+                                    (cur.aliases + cur.canonicalTitle).filter { it.isNotBlank() }.distinct()
+                                } else {
+                                    cur.aliases
+                                },
+                                summary = bgmSummary ?: cur.summary,
+                                updatedAt = System.currentTimeMillis(),
+                            ),
+                        )
                     }
                 }
             }
