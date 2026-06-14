@@ -152,17 +152,15 @@ class BangumiSyncManager @Inject constructor(
     private fun mapCollection(dto: BangumiUserSubjectCollectionDto, now: Long): UserCollectionEntity? {
         val subjectId = dto.subjectId.takeIf { it > 0 } ?: return null
         val workId = subjectId.toString()
-        // F9：口味画像标签来源——合并「用户自定义标签」与「作品社区标签（Bangumi subject tags，按标注人数取前若干）」，
-        // 并清洗（下划线/连字符转空格、折叠空白、去过短）。使高/低分倾向标签来自作品标签而非仅自定义标签。
-        val userTags = dto.tags
-        val subjectTags = dto.subject?.tags.orEmpty()
+        // P0-2：口味画像只用「作品自身的 Bangumi 社区标签」（按标注人数降序），不再混入用户自定义
+        // 标签（dto.tags）；并过滤年份/季度/媒介格式/改编来源等非内容噪声（如「2024年10月」「TV」「漫画改」），
+        // 使高/低分倾向标签是真正的题材/情绪信号，而非每部都有的元数据（用户诉求：用作品本身 tag）。
+        val contentTags = dto.subject?.tags.orEmpty()
             .sortedByDescending { it.count }
-            .take(12)
-            .map { it.name }
-        val mergedTags = (userTags + subjectTags)
-            .map { cleanTag(it) }
-            .filter { it.length >= 2 }
+            .map { cleanTag(it.name) }
+            .filter { it.length >= 2 && !isNoiseTag(it) }
             .distinct()
+            .take(12)
         return UserCollectionEntity(
             id = "BANGUMI:$subjectId",
             source = CredentialSourceId.BANGUMI.name,
@@ -172,7 +170,7 @@ class BangumiSyncManager @Inject constructor(
             rating = dto.rate.takeIf { it in 1..10 },
             progress = dto.epStatus.takeIf { it > 0 },
             comment = dto.comment?.takeIf { it.isNotBlank() },
-            tags = mergedTags,
+            tags = contentTags,
             updatedAt = now,
             syncedAt = now,
             sourceUpdatedAt = dto.updatedAt,
@@ -183,9 +181,34 @@ class BangumiSyncManager @Inject constructor(
     private fun cleanTag(raw: String): String =
         raw.replace('_', ' ').replace('-', ' ').trim().replace(Regex("\\s+"), " ")
 
+    /**
+     * P0-2：是否为「非内容」噪声标签——年份/季度（如 2024、2024年10月）、媒介格式（TV/OVA/剧场版）、
+     * 改编来源（漫画改/轻小说改/原创）、地区（日本）等。这些是元数据而非题材/情绪信号，
+     * 计入口味画像会让「每部都有的标签」霸榜，污染高/低分倾向，故剔除。
+     */
+    private fun isNoiseTag(tag: String): Boolean {
+        val t = tag.trim()
+        if (t.isEmpty()) return true
+        if (NOISE_DATE_REGEX.matches(t)) return true
+        return t.lowercase() in NOISE_TAGS
+    }
+
     private companion object {
         const val PAGE_SIZE = 50
         const val MAX_PAGES = 40
+
+        /** P0-2：年份/季度型噪声标签正则（如 2024、2024年、2024年10月、2024-10、10月）。 */
+        val NOISE_DATE_REGEX = Regex(
+            "^(\\d{4}|\\d{4}\u5e74|\\d{4}\u5e74\\d{1,2}\u6708|\\d{4}[-./]\\d{1,2}|\\d{1,2}\u6708)$",
+        )
+
+        /** P0-2：媒介格式/改编来源/地区等非内容噪声标签（小写比较）。 */
+        val NOISE_TAGS: Set<String> = setOf(
+            "tv", "ova", "oad", "ona", "web", "sp", "pv", "cm", "mv", "op", "ed",
+            "\u5267场版", "\u5267场", "\u7535影", "\u77ed片", "\u7279别篇", "\u52a8画", "\u65e5本\u52a8画", "tv\u52a8画", "\u52a8画\u5316",
+            "\u6f2b画改", "\u8f7b小说改", "\u5c0f说改", "\u6e38戏改", "gal\u6539", "galgame\u6539", "eroge\u6539", "\u539f创", "\u6f2b改",
+            "\u6539编", "18\u7981\u6e38戏\u6539", "\u624b游改", "\u65e5本", "\u56fd产", "\u4e2d国", "\u7f8e国",
+        )
 
         /** Bangumi 收藏 type：1 想看 / 2 看过 / 3 在看 / 4 搁置 / 5 抛弃。 */
         fun mapStatus(type: Int?): String? = when (type) {
