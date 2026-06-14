@@ -177,6 +177,10 @@ class WorkRepositoryImpl @Inject constructor(
                 budget--
                 val hits = (bangumi.searchSubjects(keyword = q) as? AppResult.Success)?.data.orEmpty()
                 val best = hits
+                    // P0-1：仅接受动画条目，排除同名的小说/漫画/游戏（如「負けヒロインが多すぎる！」
+                    // 小说 343241、或「ぬきたし」原作 VN），避免把非动画条目当作动画的 Bangumi 代表，
+                    // 导致评分人数 / 简介错配（rep 已确认是动画，见上方 mediaType 判定）。
+                    .filter { it.work.mediaType == com.acgcompass.domain.model.MediaType.ANIME }
                     .map { m -> m to candidateTitles(m).maxOf { matchConfidence(candidate = it, query = q) } }
                     // 同相似度时优先评分人数多的条目，避免反查到同名小条目（评分人数异常偏低）。
                     .maxWithOrNull(compareBy<Pair<WorkMatch, Double>>({ it.second }, { it.first.popularity }))
@@ -588,6 +592,10 @@ class WorkRepositoryImpl @Inject constructor(
                 val matches = (search(q) as? AppResult.Success)?.data.orEmpty()
                 if (matches.isEmpty()) continue
                 val localBest = matches
+                    // P0-1：仅接受动画条目（本作已确认是动画），排除同名小说/漫画/游戏，避免取错
+                    // 条目的评分（如「負けヒロインが多すぎる！」小说 343241=2353人 vs 动画 464376=27330人；
+                    // 「ぬきたし」原作 VN vs 动画 477825）——这是免卸载重装即可纠正评分错配的关键。
+                    .filter { it.work.mediaType == com.acgcompass.domain.model.MediaType.ANIME }
                     .map { m ->
                         val conf = candidateTitles(m).maxOf { ct ->
                             titleVariants.maxOf { tv -> matchConfidence(candidate = ct, query = tv) }
