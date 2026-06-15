@@ -138,6 +138,8 @@ fun DetailScreen(
         HeaderSection(header = state.header)
         RatingsSection(ratings = state.ratings)
         ConsensusSection(consensus = state.consensus)
+        // P2-4：真实 Bangumi 社区标签区（取代原决策区「适合心情」的间接推断）。
+        TagsSection(tags = state.tags)
         PersonalSection(personal = state.personal, recordMessage = recordMessage, onToggleBacklog = onToggleBacklog, onUpdateMyRecord = onUpdateMyRecord)
         DecisionSection(decision = state.decision, aiMatch = aiMatch, onAnalyzeMatchWithAi = onAnalyzeMatchWithAi)
         WatchRouteSection(
@@ -746,19 +748,6 @@ private fun DecisionSection(
                     )
                 }
             }
-            // 适合心情（来自 MOOD 标签）。
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(text = "适合心情", style = MaterialTheme.typography.titleSmall)
-                if (decision.suitableMoods.isEmpty()) {
-                    Text(
-                        text = NO_DATA,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                } else {
-                    ChipFlowRow(items = decision.suitableMoods)
-                }
-            }
             // 补完成本一句话摘要。
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(text = "补完成本", style = MaterialTheme.typography.titleSmall)
@@ -769,6 +758,18 @@ private fun DecisionSection(
                 )
             }
         }
+    }
+}
+
+/** P2-4：作品标签区——展示真实 Bangumi 社区标签（按热度序），取代原「适合心情」的间接推断。空则不渲染。 */
+@Composable
+private fun TagsSection(
+    tags: List<String>,
+    modifier: Modifier = Modifier,
+) {
+    if (tags.isEmpty()) return
+    SectionCard(title = "标签", modifier = modifier) {
+        ChipFlowRow(items = tags)
     }
 }
 

@@ -42,6 +42,8 @@ data class DetailUiState(
     val completionCost: CompletionCostUiModel,
     /** H：结构化观看路线（可点击作品行）。 */
     val routeEntries: List<RouteEntryUi> = emptyList(),
+    /** P2-4：Bangumi 社区标签（按热度序），用于详情页「标签」区展示。空表示暂无、不展示该区。 */
+    val tags: List<String> = emptyList(),
 )
 
 /**
@@ -243,6 +245,8 @@ data class DetailExtras(
     val routeEntries: List<RouteEntryUi> = emptyList(),
     /** M1（L5）：真实他人短评展示行（「昵称 · N分：短评」），空表示暂无。 */
     val comments: List<String> = emptyList(),
+    /** P2-4：Bangumi 社区标签（按热度序，最多 15 个），用于详情页「标签」区展示。空表示暂无。 */
+    val tags: List<String> = emptyList(),
 )
 
 /** H/G14：观看路线分区。MAIN/OPTIONAL/SKIPPABLE 仅限动画；DERIVED 为非动画衍生作/原作（游戏/画集/广播剧等）。 */
@@ -370,6 +374,9 @@ fun buildDetailUiState(
         tabs = work.toTabs(ratings, personal, extras, radar),
         completionCost = completionCost,
         routeEntries = extras.routeEntries,
+        // P2-4：优先用 loadExtras 拉取的 Bangumi 社区标签；首帧未就绪时回退作品自带标签
+        //（Bangumi 主源作品 work.tags 即社区标签），都空则不展示「标签」区。
+        tags = extras.tags.ifEmpty { work.tags.map { it.name }.filter { it.isNotBlank() } },
     )
 }
 

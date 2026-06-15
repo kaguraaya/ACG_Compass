@@ -483,12 +483,20 @@ class DetailViewModel @Inject constructor(
                     "${c.nickname}$rate：${c.text.replace("\n", " ").take(80)}"
                 }
 
+            // P2-4：Bangumi 社区标签——主源即 Bangumi 时直接用已入库的 work.tags（社区标签，H13）；
+            // 非 Bangumi 主源（如 Jikan，work.tags 为空）则用解析到的 subjectId 拉取 Bangumi 标签补充。
+            val bangumiTags = work.tags.map { it.name }.filter { it.isNotBlank() }.ifEmpty {
+                (bangumiDataSource.getSubject(subjectId) as? AppResult.Success)?.data
+                    ?.tags?.map { it.name }?.filter { it.isNotBlank() }.orEmpty()
+            }.take(15)
+
             detailExtras.value = DetailExtras(
                 charactersStaffBody = charactersStaffBody,
                 relationsBody = relationsBody,
                 watchRouteBody = watchRouteBody,
                 routeEntries = routeEntries,
                 comments = commentLines,
+                tags = bangumiTags,
             )
         }
     }
