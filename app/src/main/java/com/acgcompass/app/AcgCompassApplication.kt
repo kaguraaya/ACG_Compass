@@ -10,6 +10,7 @@ import coil.memory.MemoryCache
 import coil.request.CachePolicy
 import com.acgcompass.data.datastore.SettingsDataStore
 import com.acgcompass.data.sync.SyncScheduler
+import com.acgcompass.data.sync.TasteProfileAutoUpdater
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,6 +42,8 @@ class AcgCompassApplication : Application(), Configuration.Provider, ImageLoader
     @Inject lateinit var settingsDataStore: SettingsDataStore
 
     @Inject lateinit var syncScheduler: SyncScheduler
+
+    @Inject lateinit var tasteProfileAutoUpdater: TasteProfileAutoUpdater
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -74,6 +77,8 @@ class AcgCompassApplication : Application(), Configuration.Provider, ImageLoader
             .distinctUntilChanged()
             .onEach { minutes -> syncScheduler.apply(minutes) }
             .launchIn(appScope)
+        // P1-3：个人收藏变化（同步入库 / 详情页改状态 / 加待补池）→ 防抖后自动重算口味画像。
+        tasteProfileAutoUpdater.start(appScope)
     }
 
     companion object {

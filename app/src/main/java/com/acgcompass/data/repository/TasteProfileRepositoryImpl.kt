@@ -88,10 +88,17 @@ class TasteProfileRepositoryImpl @Inject constructor(
             )
             val tagStatRows = stats.toTagStatRows(profileId)
 
-            // 覆盖式写入：先清掉旧标签行再 upsert，保证读回的画像与本次统计一致。
+            // P1-3：口味画像只需保留最新一份（observeLatestProfile 取最新）。先快照写入前的旧画像，
+            // 写入本次画像后再删除旧画像及其标签行，避免自动重算导致 taste_profiles 持续膨胀。
+            val staleProfiles = tasteDao.getAllProfiles()
+            // 覆盖式写入：先清掉（本次 id 的）旧标签行再 upsert，保证读回的画像与本次统计一致。
             tasteDao.upsertProfile(profileEntity)
             tasteDao.deleteTagStatsForProfile(profileId)
             tasteDao.upsertTagStats(tagStatRows)
+            staleProfiles.asSequence().filter { it.id != profileId }.forEach { old ->
+                tasteDao.deleteTagStatsForProfile(old.id)
+                tasteDao.deleteProfile(old)
+            }
 
             profileEntity.toDomain(tagStatRows)
         }
