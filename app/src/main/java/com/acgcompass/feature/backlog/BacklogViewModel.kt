@@ -95,7 +95,10 @@ class BacklogViewModel @Inject constructor(
             initialValue = UiState.Loading,
         )
 
-    private val _filter = MutableStateFlow(BacklogFilter.NONE)
+    // P1-4：待补池主列表默认排除吃灰馆条目（inDustMuseum=false），使「归档到吃灰馆」是真正的移动
+    // 而非复制——吃灰条目只在独立吃灰馆页（dustMuseumCards）展示，不再同时滞留主列表。用户仍可用
+    // 「吃灰状态」筛选切到「全部」(null) 或「仅吃灰」(true) 查看。
+    private val _filter = MutableStateFlow(BacklogFilter(inDustMuseum = false))
     val filter: StateFlow<BacklogFilter> = _filter.asStateFlow()
 
     private val _sort = MutableStateFlow(BacklogSort.ADDED_DESC)
@@ -175,9 +178,9 @@ class BacklogViewModel @Inject constructor(
         _filter.update { it.copy(inDustMuseum = value) }
     }
 
-    /** 清除全部过滤条件。 */
+    /** 清除全部过滤条件（保留待补池主列表默认排除吃灰馆条目的基线，P1-4）。 */
     fun onClearFilters() {
-        _filter.value = BacklogFilter.NONE
+        _filter.value = BacklogFilter(inDustMuseum = false)
     }
 
     // endregion

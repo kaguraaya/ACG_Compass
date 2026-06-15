@@ -148,7 +148,9 @@ fun BacklogScreen(
         (state is UiState.Success && state.data.isEmpty())
     val hasActiveFilter = filter.priorities.isNotEmpty() ||
         filter.mediaTypes.isNotEmpty() ||
-        filter.inDustMuseum != null
+        // P1-4：inDustMuseum=false 是待补池主列表默认基线（不含吃灰），不计为「已激活筛选」；
+        // 仅当切到「全部」(null) 或「仅吃灰」(true) 才算激活，便于「清除筛选」回到默认。
+        filter.inDustMuseum != false
     // H14 / I17：列表 / 网格排版切换（网格=3 列只显示封面）；形态由 DataStore 持久化记忆。
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -500,7 +502,8 @@ private fun FilterCard(
 ) {
     var filtersExpanded by rememberSaveable { mutableStateOf(false) }
     val activeCount = filter.priorities.size + filter.mediaTypes.size +
-        (if (filter.inDustMuseum != null) 1 else 0)
+        // P1-4：默认基线 inDustMuseum=false 不计入激活筛选数。
+        (if (filter.inDustMuseum != false) 1 else 0)
     Card(
         modifier = Modifier
             .fillMaxWidth()
