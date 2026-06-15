@@ -117,7 +117,6 @@ app/src/main/java/com/acgcompass/
 ## 隐私与安全
 
 - 不收集用户数据；所有凭据与同步 Token 仅存于本地加密存储。
-- 仓库已通过 `.gitignore` 排除 `*.har`（抓包）、`local.properties`、keystore、`参考项目文件/` 等敏感 / 大文件。
 - AI 请求仅发往你自行配置的服务商。
 
 ## 参与贡献
