@@ -1,0 +1,17 @@
+name = "bangumi-worker-proxy"
+main = "src/index.ts"
+compatibility_date = "2026-06-20"
+
+# Keep workers.dev enabled for quick testing without ICP filing or server setup.
+workers_dev = true
+
+# After you add kaguraaya.xyz to Cloudflare, you can enable a custom domain like this:
+# routes = [
+#   { pattern = "bgm.kaguraaya.xyz", custom_domain = true }
+# ]
+
+[observability]
+enabled = true
+
+[vars]
+DEFAULT_USER_AGENT = "ACGCompass/1.0 (Bangumi proxy; contact: kaguraaya10@gmail.com)"
