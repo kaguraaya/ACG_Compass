@@ -3,6 +3,7 @@ package com.acgcompass.domain.matching
 import com.acgcompass.domain.model.SourceId
 import com.acgcompass.domain.model.Work
 import com.acgcompass.domain.model.WorkMatch
+import kotlin.math.ln
 
 /**
  * 跨源合并（通用算法，R20/R42）。纯函数，无任何针对具体作品（如 9-nine / 2.5）的硬编码特判。
@@ -115,16 +116,36 @@ public fun clusterMatches(matches: List<WorkMatch>): List<List<WorkMatch>> {
     return clusters
 }
 
+/** P0-1：评分人数加成的满档（对数缩放）——达此人数即拿到最大加成。 */
+public const val POPULARITY_BOOST_FULL: Double = 50_000.0
+
+/** P0-1：评分人数加成上限——可弥补的相似度劣势上限（避免续作/小条目顶替正片）。 */
+public const val POPULARITY_BOOST_MAX: Double = 0.18
+
 /**
- * 选取簇代表：优先 Bangumi（提供中文名），否则置信度最高者。
+ * 选代表 / 选条目的综合得分 = **相似度** + **评分人数对数加成**（P0-1）。
  *
- * 同置信度时再按**评分人数 / 热度**（[WorkMatch.popularity]）降序——避免代表落到同名小条目
- * （PV / 广播剧 / 同人 / 废弃条目，评分人数极少），否则详情页评分人数会异常偏低（如「9000+ 人」
- * 误显示成「1 人」）。这是通用排序规则，不针对任何具体作品（设计：热度仅用于排序、不决定合并）。
+ * 人数加成按 `ln(1+人数)` 缩放、上限 [POPULARITY_BOOST_MAX]；据此让**正片**（评分人数远多）
+ * 在相似度仅略低于**续作（第二季）/ 小条目**（PV / 广播剧 / 同人 / 废弃）时仍胜出，
+ * 修复「正片 27000+ 人被第二季 11 人顶替」。加成有上限，故相似度差距很大的不相关高热条目不会误胜。
+ * 通用规则，不针对任何具体作品（人数仅用于排序、不决定合并）。
+ */
+public fun representativeScore(confidence: Double, popularity: Int): Double {
+    val ratio = ln(1.0 + popularity.coerceAtLeast(0)) / ln(1.0 + POPULARITY_BOOST_FULL)
+    return confidence + (POPULARITY_BOOST_MAX * ratio).coerceIn(0.0, POPULARITY_BOOST_MAX)
+}
+
+/**
+ * 选取簇代表：优先 Bangumi（提供中文名），否则综合得分最高者。
+ *
+ * 排序键（P0-1 修正）：[representativeScore]（相似度 + 评分人数加成）降序 → 评分人数降序。
+ * 据此避免代表落到续作（第二季）或同名小条目，否则详情页评分人数严重偏低
+ * （如正片「27000+ 人」被第二季「11 人」顶替）。通用规则，不针对任何具体作品。
  */
 public fun representativeOf(cluster: List<WorkMatch>): WorkMatch {
     val ranked = cluster.sortedWith(
-        compareByDescending<WorkMatch> { it.matchConfidence }.thenByDescending { it.popularity },
+        compareByDescending<WorkMatch> { representativeScore(it.matchConfidence.toDouble(), it.popularity) }
+            .thenByDescending { it.popularity },
     )
     return ranked.firstOrNull { it.sourceTag == SourceId.BANGUMI } ?: ranked.first()
 }

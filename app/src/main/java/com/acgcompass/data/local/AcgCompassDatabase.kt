@@ -8,6 +8,7 @@ import com.acgcompass.data.local.dao.AiResultDao
 import com.acgcompass.data.local.dao.BacklogDao
 import com.acgcompass.data.local.dao.CredentialMetaDao
 import com.acgcompass.data.local.dao.ImportDao
+import com.acgcompass.data.local.dao.RankingCacheDao
 import com.acgcompass.data.local.dao.RatingDao
 import com.acgcompass.data.local.dao.RouteNodeDao
 import com.acgcompass.data.local.dao.SnapshotDao
@@ -22,6 +23,7 @@ import com.acgcompass.data.local.entity.ChangeLogEntity
 import com.acgcompass.data.local.entity.CredentialMetaEntity
 import com.acgcompass.data.local.entity.ImportBatchEntity
 import com.acgcompass.data.local.entity.ImportItemEntity
+import com.acgcompass.data.local.entity.RankingCacheEntity
 import com.acgcompass.data.local.entity.RatingEntity
 import com.acgcompass.data.local.entity.RecommendationCountEntity
 import com.acgcompass.data.local.entity.RouteNodeEntity
@@ -69,8 +71,9 @@ import com.acgcompass.data.local.entity.WorkTagEntity
         RouteNodeEntity::class,
         CredentialMetaEntity::class,
         UserCollectionEntity::class,
+        RankingCacheEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -99,6 +102,8 @@ abstract class AcgCompassDatabase : RoomDatabase() {
     abstract fun credentialMetaDao(): CredentialMetaDao
 
     abstract fun userCollectionDao(): UserCollectionDao
+
+    abstract fun rankingCacheDao(): RankingCacheDao
 
     companion object {
         /** Physical database file name. */

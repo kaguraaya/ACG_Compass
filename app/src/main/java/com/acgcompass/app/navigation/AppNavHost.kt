@@ -34,7 +34,9 @@ import com.acgcompass.feature.mine.AboutScreen
 import com.acgcompass.feature.mine.MineRoute
 import com.acgcompass.feature.onboarding.OnboardingRoute
 import com.acgcompass.feature.onboarding.OnboardingViewModel
+import com.acgcompass.feature.recommender.RECOMMENDER_ARG_TAGS
 import com.acgcompass.feature.recommender.RecommenderRoute
+import com.acgcompass.feature.recommender.recommenderRoute
 import com.acgcompass.feature.settings.SettingsScreen
 import com.acgcompass.feature.settings.SettingsSourceScreen
 import com.acgcompass.feature.taste.TasteProfileRoute
@@ -120,8 +122,8 @@ fun AppNavHost(
         // region 底部五栏
         composable(AppDestination.Home.route) {
             HomeRoute(
-                onOpenRecommender = {
-                    navController.navigate(AppDestination.Recommender.route)
+                onOpenRecommender = { presetTags ->
+                    navController.navigate(recommenderRoute(presetTags))
                 },
                 // 搜索入口暂导航到发现页（Search_Module 真实页见后续任务）。
                 onOpenSearch = {
@@ -216,7 +218,17 @@ private fun NavGraphBuilder.nestedRoutes(navController: NavHostController) {
     composable(AppDestination.Import.route) {
         ImportRoute(onBack = { navController.popBackStack() })
     }
-    composable(AppDestination.Recommender.route) {
+    composable(
+        route = AppDestination.Recommender.route,
+        arguments = listOf(
+            navArgument(RECOMMENDER_ARG_TAGS) {
+                type = NavType.StringType
+                nullable = true
+                defaultValue = null
+            },
+        ),
+    ) {
+        // P2-8：presetTags 由路由参数经 SavedStateHandle 注入 RecommenderViewModel（首页今日状态预填）。
         RecommenderRoute(
             onOpenWork = { workId ->
                 navController.navigate(detailRoute(workId))

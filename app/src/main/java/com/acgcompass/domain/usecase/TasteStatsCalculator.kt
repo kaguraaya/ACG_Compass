@@ -8,12 +8,14 @@ package com.acgcompass.domain.usecase
  * - [tags]：该作品的标签（同一记录内重复标签视为一次，避免单作品多标签放大计数）。
  * - [reviewText]：用户短评原文（`null`/空白时不参与常用短评词统计）。
  * - [status]：收藏状态（如 `dropped`/`on_hold`/`抛弃`/`搁置`），用于统计常见搁置类型。
+ * - [updatedAt]：该记录最近一次更新的时间戳（毫秒）；用于近因加权（时间建权，B-2），`null` 表示未知（按中性权重处理）。
  */
 data class TasteInputRecord(
     val rating: Int? = null,
     val tags: List<String> = emptyList(),
     val reviewText: String? = null,
     val status: String? = null,
+    val updatedAt: Long? = null,
 )
 
 /** 某个名称（标签 / 短评词 / 搁置类型）的出现计数。[count] 恒为非负。 */
@@ -66,44 +68,58 @@ class TasteStatsCalculator {
         val highRecords = records.filter { it.rating != null && it.rating >= HIGH_SCORE_MIN }
         val lowRecords = records.filter { it.rating != null && it.rating <= LOW_SCORE_MAX }
         val droppedRecords = records.filter { isDroppedStatus(it.status) }
+        // 时间建权（B-2）：以「最近一条记录」为基准计算各记录的近因权重，使近期评分对高/低分标签
+        // 排序的影响更大；无任何时间戳时基准为 0 → 全员权重 1.0 → 行为与未加权完全一致（向后兼容）。
+        val reference = records.maxOfOrNull { it.updatedAt ?: 0L } ?: 0L
 
         return TasteStats(
             sampleSize = records.size,
             highScoreSampleCount = highRecords.size,
             lowScoreSampleCount = lowRecords.size,
             droppedSampleCount = droppedRecords.size,
-            highScoreTags = tallyTags(highRecords),
-            lowScoreTags = tallyTags(lowRecords),
-            commonReviewWords = tallyReviewWords(records),
-            droppedTypes = tallyTags(droppedRecords),
+            highScoreTags = tallyTags(highRecords, reference),
+            lowScoreTags = tallyTags(lowRecords, reference),
+            commonReviewWords = tallyReviewWords(records, reference),
+            droppedTypes = tallyTags(droppedRecords, reference),
         )
     }
 
-    /** 统计一批记录的标签频次；单条记录内标签去重并规范化，空白标签忽略。 */
-    private fun tallyTags(records: List<TasteInputRecord>): List<NameCount> {
-        val counts = LinkedHashMap<String, Int>()
+    /**
+     * 统计一批记录的标签：单作品内标签去重并规范化，空白标签忽略。
+     *
+     * 展示计数（[NameCount.count]）仍为**原始出现作品数**（直观、可守恒，Property 13），
+     * 但列表**排序**改用近因加权得分（[recencyWeight]）——近期评分的标签优先靠前（时间建权，B-2）。
+     */
+    private fun tallyTags(records: List<TasteInputRecord>, reference: Long): List<NameCount> {
+        val rawCount = LinkedHashMap<String, Int>()
+        val weighted = LinkedHashMap<String, Double>()
         for (record in records) {
+            val w = recencyWeight(record.updatedAt, reference)
             val seen = record.tags
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
                 .distinct()
             for (tag in seen) {
-                counts[tag] = (counts[tag] ?: 0) + 1
+                rawCount[tag] = (rawCount[tag] ?: 0) + 1
+                weighted[tag] = (weighted[tag] ?: 0.0) + w
             }
         }
-        return counts.toSortedNameCounts()
+        return buildNameCounts(rawCount, weighted)
     }
 
-    /** 统计常用短评词：分词 → 规范化 → 去停用词与过短 token → 频次统计。 */
-    private fun tallyReviewWords(records: List<TasteInputRecord>): List<NameCount> {
-        val counts = LinkedHashMap<String, Int>()
+    /** 统计常用短评词：分词 → 规范化 → 去停用词与过短 token → 频次统计；排序同样近因加权（B-2）。 */
+    private fun tallyReviewWords(records: List<TasteInputRecord>, reference: Long): List<NameCount> {
+        val rawCount = LinkedHashMap<String, Int>()
+        val weighted = LinkedHashMap<String, Double>()
         for (record in records) {
             val text = record.reviewText ?: continue
+            val w = recencyWeight(record.updatedAt, reference)
             for (token in tokenize(text)) {
-                counts[token] = (counts[token] ?: 0) + 1
+                rawCount[token] = (rawCount[token] ?: 0) + 1
+                weighted[token] = (weighted[token] ?: 0.0) + w
             }
         }
-        return counts.toSortedNameCounts()
+        return buildNameCounts(rawCount, weighted)
     }
 
     /**
@@ -121,10 +137,28 @@ class TasteStatsCalculator {
         return normalized in DROPPED_STATUSES
     }
 
-    private fun Map<String, Int>.toSortedNameCounts(): List<NameCount> =
-        entries
-            .map { NameCount(it.key, it.value) }
-            .sortedWith(compareByDescending<NameCount> { it.count }.thenBy { it.name })
+    /**
+     * 近因权重（B-2）：以 [reference]（最近一条记录的时间戳）为基准，按半衰期 [RECENCY_HALF_LIFE_MILLIS]
+     * 指数衰减，并设权重地板 [RECENCY_MIN_WEIGHT]（旧评分仍保留基本话语权，不会归零）。
+     *
+     * 无时间戳（`updatedAt == null`）或无基准（`reference <= 0`）时返回 1.0（中性，等价未加权）。
+     */
+    private fun recencyWeight(updatedAt: Long?, reference: Long): Double {
+        if (reference <= 0L || updatedAt == null) return 1.0
+        val age = (reference - updatedAt).coerceAtLeast(0L)
+        if (age == 0L) return 1.0
+        val halfLives = age.toDouble() / RECENCY_HALF_LIFE_MILLIS
+        return Math.pow(0.5, halfLives).coerceAtLeast(RECENCY_MIN_WEIGHT)
+    }
+
+    /** 按近因加权得分降序、名称升序排序；计数取原始出现次数（直观且满足守恒）。 */
+    private fun buildNameCounts(
+        rawCount: Map<String, Int>,
+        weighted: Map<String, Double>,
+    ): List<NameCount> =
+        rawCount.keys
+            .sortedWith(compareByDescending<String> { weighted[it] ?: 0.0 }.thenBy { it })
+            .map { NameCount(it, rawCount[it] ?: 0) }
 
     companion object {
         /** 高分桶下界（含）：评分 `>=` 此值视为高分作品（10 分制）。 */
@@ -135,6 +169,12 @@ class TasteStatsCalculator {
 
         /** 参与短评词统计的最小 token 长度，过滤无意义的单字符噪声。 */
         const val MIN_WORD_LENGTH: Int = 2
+
+        /** 近因权重半衰期（B-2）：约 540 天 ≈ 1.5 年；每过一个半衰期权重减半。 */
+        const val RECENCY_HALF_LIFE_MILLIS: Long = 540L * 24 * 3600 * 1000
+
+        /** 近因权重地板（B-2）：再旧的评分也保留此最低权重，避免历史口味被完全抹除。 */
+        const val RECENCY_MIN_WEIGHT: Double = 0.3
 
         /** 视为「搁置 / 抛弃」的收藏状态（规范化为小写后比较）。 */
         val DROPPED_STATUSES: Set<String> =

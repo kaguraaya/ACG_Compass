@@ -152,6 +152,10 @@
 | 版本 | 日期 | 变更说明 | 迁移策略 | 失败回滚 |
 | --- | --- | --- | --- | --- |
 | v1 | 待填写 | 初始 schema（exportSchema=true） | 禁用 fallbackToDestructiveMigration；升级前自动 JSON 备份 | 迁移失败回滚并保留原始备份 |
+| v2 | 待填写 | 新增 `user_collections` 表（R45，用户个人收藏：状态/评分/进度/短评/标签） | `MIGRATION_1_2`：仅 `CREATE TABLE` + 两索引，不触碰既有表 | 同上（非破坏，旧表数据不动） |
+| v3 | 待填写 | `works` 新增可空 `summary` 列（F7，作品简介） | `MIGRATION_2_3`：仅 `ALTER TABLE ADD COLUMN`（TEXT，可空） | 同上 |
+| v4 | 待填写 | `works` 新增可空 `airDate` 列（I16，开播/发行日期） | `MIGRATION_3_4`：仅 `ALTER TABLE ADD COLUMN`（TEXT，可空） | 同上 |
+| v5 | 2026-06 | 新增 `ranking_cache` 表（B-4，榜单结果本地缓存：范围键+排名次序+作品 id+缓存时间），由 DataStore Preferences 迁移而来 | `MIGRATION_4_5`：仅 `CREATE TABLE`（复合主键 `scopeKey,position`），DDL 与 Room 期望 schema 一致 | 同上（非破坏，仅派生缓存） |
 
 ## 技术决策记录
 
@@ -386,9 +390,18 @@
 - 评分差异榜 `buildScoreDiffBoard`：按跨源归一化评分差距（spread）**降序**排列，差距大的排前面；差距 < 阈值(1.5/10) 不入榜；措辞中性。
 - 已知限制：差异需同一规范作品上挂有 ≥2 源评分。搜索结果经跨源合并（CrossSourceMerge）后可融合；公共发现池条目（各源独立 work id）尚未自动按标题跨源合并，故池内差异榜可能偏空——后续接入「池内跨源合并 + 交叉验证（用对方日文/英文名重试）」补全。
 
-### 口味匹配 / AI 匹配（参考 sprout / AnimeMate）
-- 本地算法：低分标签作为负信号按 1.5 倍降权；与社区评分按 亲和 0.7 + 社区 0.3 融合，缓解标签稀少导致的极端值。
-- AI 匹配输入：纳入近期最多 20 部已评分作品（标题·当时评分·短评）+ 口味画像 + 社区评分；失败回退本地模型。
+### 口味匹配 / 个性化推荐（共享 PersonalTasteScorer，2026-06 重构）
+- **共享打分引擎**：详情页「口味匹配度」与「今晚看什么」推荐统一走 `domain/usecase/PersonalTasteScorer`（纯函数），口径一致、便于单测（`PersonalTasteScorerTest`）。
+- **加权标签重合（主导）**：作品标签 ∩ 口味画像「高/低分标签」，权重 = `ln(1+标注次数) × 题材/元数据因子`；命中高分累正权、低分累负权，软饱和 `posSum/(posSum+1.5)` 聚合 → 命中越多/越强分越高（总体吻合度，组合优于单标签）。
+- **多维度标签分类（B-3）**：`domain/usecase/TasteTagTaxonomy` 把标签显式归入 `TagDimension`——题材 CONTENT(1.0) > 受众 DEMOGRAPHIC(0.7，少年向/少女向等「×向」) > 厂商 STUDIO(0.5) > 元数据 META(0.2，年份/季度/媒介格式/改编来源/放送状态/关联/地区)；`weightFactor` 取所属维度因子。池完整性已扩充噪声/厂商/受众词表与日期正则（季番/Q 季度/新番等变体）；`BangumiSyncManager` 构建画像时复用 `isMeta` 过滤（单一规则源，避免两处漂移）。
+- **社区评分再弱化**：仅作轻量先验（详情页综合分权重 0.15→**0.08**，换算为「相对你均分」的习惯调整）；推荐排序用 `TasteScore.personal`（**完全不含**社区分），社区仅作 `mean10 ≥ 下限` 的质量护栏 + 轻量 nudge。
+- **未选标签也个性化**：推荐器移除「必须选标签」前提——无所选标签时按个人口味分排序（而非只推社区高分热门）；选了标签仍硬筛（必命中≥1）。保留随机扰动与 top 段抽样的多样性。
+- **低置信收缩 / 不伪造**：画像 `confidence < 0.3` 时综合分向中性 0.5 收缩并在理由标注；无画像→「未生成画像」、作品无标签且无社区分→「数据不足」，绝不编造。
+- **无标签退化**：作品无可匹配标签但有社区分时，退化为「社区分相对你均分」的低置信估计（`Basis.COMMUNITY_FALLBACK`）。
+- AI 匹配输入：纳入近期最多 20 部已评分作品（标题·当时评分·短评）+ 口味画像 + 社区评分；失败回退本地模型。AI 提示词已强化「个人口味优先、弱化社区分、近期评分权重更高」（A-4）。
+- **时间建权（B-2）**：`TasteStatsCalculator` 以「最近一条记录」为基准对高/低分标签与常用短评词做近因加权（半衰期约 540 天 + 权重地板 0.3）——近期评分的标签排序更靠前；展示计数仍取**原始出现次数**（守恒不破，Property 13）；无 `updatedAt` 时退化为未加权（向后兼容）。
+- **画像自动更新（B-1）**：详情页保存/清空评分或短评后触发 `TasteProfileRepository.recomputeFromLocal()`，从本地 `user_collections` 重算并覆盖式落库——无需重新导入即反映最新口味。
+- **榜单缓存入 Room（B-4）**：发现页榜单顺序缓存由 DataStore Preferences 迁移到 Room `ranking_cache` 表（`RankingCacheDao`，复合主键 `scopeKey+position`，整范围事务覆盖写，带 `cachedAt`），冷启动秒开，与「单一可信源 = Room」对齐。
 
 
 ## M 轮 · 新核验 API（2026-06-11）
@@ -409,3 +422,54 @@
 - 书籍/漫画：本地不显示/不上传进度（编辑对话框对非动画隐藏进度输入）。
 - 无词条作品：写回前 `getSubject` 确认存在，否则仅本地保存并提示「该作品在 Bangumi 无词条」。
 - 实现：`BangumiApi.getEpisodes/patchEpisodeCollection` + `BangumiRemoteDataSource.markEpisodesWatched/subjectExists`。
+
+## V2 任务清单核对进度（2026-06-21）
+
+> 对照 `.kiro/specs/acg-compass/tasks-v2.md`（2026-06 重整清单）逐项回归代码核对的真实状态。
+> 说明：tasks-v2.md 各任务仍标 ⬜ 为「重整初始态」，已过时；**以本表为准**。
+> **2026-06-22 复核**：经真机验证 + 代码复核，P0-1（评分人数）、P2-2（榜单分页）、P2-5（推荐器标签）、P2-6（题材筛选）**名实不符**，已从「已完成」移入下方「⚠️ 待重修」区——其中 P0-1 已确诊到代码级。
+> **2026-06-23 修复**：P0-1 已修复并上移「已完成」表：选代表/选条目的比较器统一为 `representativeScore`（相似度 + 评分人数对数加成，上限 0.18），覆盖 `representativeOf`/`backfillBangumi`/`crossValidateRatings`（含跨标题变体）/`search` 排序四处；同时修复上轮遗留的 `confidenceBucket` 编译错误，`compileDebugKotlin` 通过，并补回归测试。
+> **2026-06-23 修复**：P2-2 榜单分页已修复并上移「已完成」表：根因为 `canLoadMore = 返回数 >= limit`，而 Bangumi 实验性搜索某页可能返回少于 limit 条→误判到底。改为由 `searchRankedSubjects` 透出分页 `total`，上层以 `offset + 已取数 < total` 判定，offset 按实际返回数推进（不跳号）并以「本页非空」防空页死循环。
+> **2026-06-23 修复**：P2-5（推荐器/今晚看什么标签）、P2-6（题材筛选）同根因已修复并上移「已完成」表：`BangumiSubjectDto.toWork()` 本就映射社区标签，但 `persistMatches`/`BangumiSyncManager` 落库只写 `WorkEntity`（不含 tags），`observeWorks` 又以 `toDomain(tags=emptyList())` 读出 → 候选池/题材 facet 作品标签恒空。新增共享 `WorkTagWriter` 在两条入库路径写 `tags`+`work_tags`（统一主键规则避免唯一索引冲突），`observeWorks` 经新增 `TagDao.getTagsForWorks` 批量回填标签。**注意**：存量数据需重新同步/重进发现页一次以补写 `work_tags`。
+
+### 已完成（代码核对通过，编译 + 打包均通过）
+
+| 任务 | 说明 | 关键实现 |
+| --- | --- | --- |
+| P0-1 评分人数错配 | 选 Bangumi 动画条目的比较/排序统一为「综合得分 = 相似度 + 评分人数对数加成（上限 0.18）」：仅动画(type=2 过滤)候选中，正片在相似度仅略低于续作/小条目时凭人数胜出；加成有上限故高热低相似不误胜。覆盖 `representativeOf`/`backfillBangumi`/`crossValidateRatings`(含跨变体)/`search` 排序四处 | `CrossSourceMerge.representativeScore/representativeOf`、`WorkRepositoryImpl`（标注 P0-1）；回归测试 `CrossSourceMergeTest` |
+| P0-2 口味画像 | 用作品 Bangumi 社区标签构建正/负向偏好 + 评分习惯 | `TasteProfile`、`TasteStatsCalculator`、`ScoringHabitCalculator` |
+| P0-3 口味匹配度 | 详情页可解释匹配度；无画像/标签时低置信不伪造 | `DetailContract.toTasteMatch`、`TasteMatchUiModel.Unavailable` |
+| P0-4 今晚看什么 | tag 硬筛 + 冲突排除 + 口味排序 + 高分段轻度打散 + 放宽提示 | `RecommenderViewModel.recommendFromWorks` |
+| P0-5 AI 置信不足仍展示 | AI 失败/未配置回退本地规则雷达，始终可见 | `GenerateSpoilerRadarUseCase`、`LocalFallbackRadar` |
+| P1-1 详情 Bangumi 优先 | 非 Bangumi 主源有 bgm 链接时用中文标题/简介覆盖外语 | `WorkRepositoryImpl`（标注 N15/P1-1） |
+| P1-3 口味画像自动更新 | 收藏/状态变更后防抖自动重算画像 | `TasteProfileAutoUpdater` |
+| P1-4 待补↔吃灰一致性 | 互斥归属移动语义 + 多选移动即时刷新 | `BacklogRepositoryImpl`（inDustMuseum）、`BulkOp.ARCHIVE/RESTORE_FROM_DUST_MUSEUM` |
+| P2-1 封面缩放 + 拖动 | 双指缩放（1~5x）+ 放大后拖动平移，缩回 1 复位 | `CoverViewer`（detectTransformGestures + offset） |
+| P2-2 榜单触底分页 | 由 Bangumi 分页 `total` 判定是否还有下一页（不再用「返回数 >= limit」）；offset 按实际返回数推进避免短返回跳号，本页空则停止防死循环 | `BangumiRankedPage`/`RankingPage`（含 total）、`searchRankedSubjects`/`loadBangumiRankingPage`、`DiscoverViewModel.onLoadMoreRanking` |
+| P2-4 详情页原生 tag | 展示真实 Bangumi 社区标签，取代「适合心情」间接推断 | `DetailScreen.TagsSection`、`DetailViewModel` 拉 bgm tags |
+| P2-5 今晚看什么·标签 | 候选池真实社区标签作为「想看的标签」筛选项 + 推荐硬筛；根因（作品标签未入库）已修复 | `WorkTagWriter`、`observeWorks` 回填、`RecommenderViewModel.computeAvailableTags/recommendFromWorks` |
+| P2-6 题材筛选 | 题材 facet = 真实社区 CONTENT 标签 ∪ 常见题材兜底，可按题材过滤；根因同 P2-5 已修复 | `WorkTagWriter`、`observeWorks` 回填、`DiscoverBoards.buildFilterFacets/applyFilter` |
+| P2-7 评分差异 | 跨源归一化差距榜（差距降序、阈值过滤），中性措辞 | `DiscoverBoards.buildScoreDiffBoard` |
+| P3-1 雷达提示词 | 雷达 = 亮点（pros）/雷点（pitfalls）/节奏（overallImpression 前中后期）/制作 | `AiTaskSpecs.spoilerRadarPrompt` |
+| P1-2 取消「想看」同步 | 移出待补池=取消想看：本地删「想看」记录 + Bangumi 力所能及清理（评分/短评/标签）；**v0 无删除收藏端点**，明确提示去网页移除（不抓网页 RC.01 3.11）；在看/看过则仅移出不取消收藏 | `DetailViewModel.removeWantToWatch` |
+| P2-3 榜单持久化缓存 | 冷启动秒开：DataStore 存每范围有序作品 id，进入先用缓存重建卡片再联网刷新（作品/评分仍以 Room 为单一可信源） | `SettingsDataStore.get/saveRankingOrder`、`WorkRepository.getCachedRanking/saveRankingCache` |
+| P2-8 今日状态入口 | 重定义为「今晚看什么」快捷入口：点心情带预填社区标签跳推荐器并预选筛选；移除无意义的旧选中态 | `HomeMood.presetTags`、`recommenderRoute(presetTags)`、`RecommenderViewModel` 预填 |
+
+### ⚠️ 标记完成但核对/实测不达标（待重修，2026-06-22 复核）
+
+> 本区原列 P0-1/P2-2/P2-5/P2-6 四项「名实不符」。经 2026-06-23 逐项确诊根因并修复，**四项均已上移「已完成」表**，本区暂无遗留项。后续若再发现名实不符项，仍在此登记。
+
+### 需运行验证（功能已实现，建议真机回归）
+
+| 任务 | 验证方式 |
+| --- | --- |
+| P1-2 | 详情页对「想看」作品点「移出待补池」→ 提示「已取消本地想看；Bangumi 不支持 API 删除收藏…」；本地「想看」记录消失；若为在看/看过则仅移出待补池并保留记录 |
+| P2-3 | 榜单加载后杀进程冷启动，再进榜单瞬间显示上次内容（随后后台联网刷新） |
+| P2-8 | 首页「今晚想看哪种？」点某心情 → 跳「今晚看什么」且对应标签已预选高亮 |
+
+### 工程化与验证
+
+- **E-2 构建环境**：✅ 非 ASCII 路径 `android.overridePathCheck=true`，`:app:assembleDebug` 通过。
+- **APK 产物**：`app/build/outputs/apk/debug/app-debug.apk`（含本轮 P1-2/P2-2/P2-3/P2-8 及此前 P2-1/P2-4/P2-5）。
+- **V2 清单状态**：P0-1～P3-1 全部已实现并编译通过；剩余仅「真机功能回归」与「纯英文路径下跑单测」两项环境/验证事项。
+- **单元测试环境问题**：当前项目路径含中文「分支」，Windows + Kotest（JUnit Platform）类加载报 `ClassNotFoundException`（连无关的 `SanityTest` 亦失败），属环境问题（非代码缺陷）；`--tests` 过滤与 `--no-configuration-cache` 均无效。建议将仓库移至**纯英文路径**后执行 `:app:testDebugUnitTest` 验证（CI Linux 纯英文路径不受影响）。

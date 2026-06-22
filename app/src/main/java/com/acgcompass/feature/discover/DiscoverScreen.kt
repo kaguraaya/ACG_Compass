@@ -1,5 +1,7 @@
 package com.acgcompass.feature.discover
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -7,6 +9,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -15,6 +18,8 @@ import androidx.compose.foundation.layout.FlowRowScope
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
@@ -35,11 +40,19 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -79,6 +92,8 @@ fun DiscoverRoute(
     val poolError by viewModel.poolError.collectAsStateWithLifecycle()
     val rankingScope by viewModel.rankingScope.collectAsStateWithLifecycle()
     val scopedRanking by viewModel.scopedRanking.collectAsStateWithLifecycle()
+    val rankingLoadingMore by viewModel.rankingLoadingMore.collectAsStateWithLifecycle()
+    val rankingCanLoadMore by viewModel.rankingCanLoadMore.collectAsStateWithLifecycle()
 
     DiscoverScreen(
         state = state,
@@ -93,8 +108,11 @@ fun DiscoverRoute(
         poolError = poolError,
         rankingScope = rankingScope,
         scopedRanking = scopedRanking,
+        rankingLoadingMore = rankingLoadingMore,
+        rankingCanLoadMore = rankingCanLoadMore,
         onSelectRankingScope = viewModel::onSelectRankingScope,
         onRetryRanking = viewModel::onRetryRanking,
+        onLoadMoreRanking = viewModel::onLoadMoreRanking,
         onLoadPool = viewModel::loadPublicPool,
         onQueryChange = viewModel::onQueryChange,
         onRetry = viewModel::onRetry,
@@ -131,8 +149,11 @@ fun DiscoverScreen(
     poolError: String?,
     rankingScope: RankingScope,
     scopedRanking: UiState<List<RankedWork>>,
+    rankingLoadingMore: Boolean,
+    rankingCanLoadMore: Boolean,
     onSelectRankingScope: (RankingScope) -> Unit,
     onRetryRanking: () -> Unit,
+    onLoadMoreRanking: () -> Unit,
     onLoadPool: () -> Unit,
     onQueryChange: (String) -> Unit,
     onRetry: () -> Unit,
@@ -171,8 +192,11 @@ fun DiscoverScreen(
                     poolError = poolError,
                     rankingScope = rankingScope,
                     scopedRanking = scopedRanking,
+                    rankingLoadingMore = rankingLoadingMore,
+                    rankingCanLoadMore = rankingCanLoadMore,
                     onSelectRankingScope = onSelectRankingScope,
                     onRetryRanking = onRetryRanking,
+                    onLoadMoreRanking = onLoadMoreRanking,
                     onLoadPool = onLoadPool,
                     onOpenWork = onOpenWork,
                 )
@@ -462,8 +486,11 @@ private fun DiscoverScreenEmptyPreview() {
             poolError = null,
             rankingScope = RankingScope.OVERALL,
             scopedRanking = UiState.Empty(SEARCH_CTA),
+            rankingLoadingMore = false,
+            rankingCanLoadMore = false,
             onSelectRankingScope = {},
             onRetryRanking = {},
+            onLoadMoreRanking = {},
             onLoadPool = {},
             onQueryChange = {},
             onRetry = {},
@@ -487,12 +514,29 @@ private fun RankingSection(
     poolError: String?,
     rankingScope: RankingScope,
     scopedRanking: UiState<List<RankedWork>>,
+    rankingLoadingMore: Boolean,
+    rankingCanLoadMore: Boolean,
     onSelectRankingScope: (RankingScope) -> Unit,
     onRetryRanking: () -> Unit,
+    onLoadMoreRanking: () -> Unit,
     onLoadPool: () -> Unit,
     onOpenWork: (String) -> Unit,
 ) {
+    // P2-2：触底加载更多——共享 LazyListState，最后可见项接近末尾且仍可加载时触发下一页。
+    val listState = rememberLazyListState()
+    val shouldLoadMore by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: 0
+            val total = info.totalItemsCount
+            total > 0 && lastVisible >= total - 3
+        }
+    }
+    LaunchedEffect(shouldLoadMore, rankingCanLoadMore) {
+        if (shouldLoadMore && rankingCanLoadMore) onLoadMoreRanking()
+    }
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(
             start = ScreenContentPadding.Horizontal,
@@ -539,6 +583,32 @@ private fun RankingSection(
             is UiState.Success -> {
                 itemsIndexed(s.data, key = { _, rw -> "rank_${rw.workId}" }) { index, rw ->
                     RankedWorkCard(rank = index + 1, card = rw.card, onClick = { onOpenWork(rw.workId) })
+                }
+                // P2-2：分页页脚——加载中显示指示；到底显示提示。
+                if (rankingLoadingMore) {
+                    item(key = "rank_loading_more") {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                        ) {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                            )
+                            Text("  正在加载更多…", style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                } else if (!rankingCanLoadMore && s.data.isNotEmpty()) {
+                    item(key = "rank_end") {
+                        Text(
+                            text = "已到榜单底部",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        )
+                    }
                 }
             }
             is UiState.Empty -> item(key = "rank_empty") {
@@ -612,15 +682,98 @@ private fun ScoreDiffSection(
             item { EmptyDataPlaceholder("暂无评分差距较大的作品") }
         } else {
             items(items, key = { it.workId }) { diff ->
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     WorkCard(model = diff.card, onClick = { onOpenWork(diff.workId) })
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = diff.spreadLabel,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        DivergenceBadge(level = diff.divergenceLevel)
+                    }
+                    ScoreSpreadBar(sources = diff.sourceScores)
                     Text(
-                        text = "${diff.spreadLabel} · ${diff.perSourceLabels.joinToString(" / ")}",
+                        text = diff.perSourceLabels.joinToString("  /  "),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
+        }
+    }
+}
+
+/** 分歧程度徽标（RC.05.05 丰富化）：按等级着色——显著=错误强调 / 明显=三级容器 / 轻微=中性。 */
+@Composable
+private fun DivergenceBadge(level: DivergenceLevel) {
+    val (bg, fg) = when (level) {
+        DivergenceLevel.STRONG ->
+            MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
+        DivergenceLevel.NOTABLE ->
+            MaterialTheme.colorScheme.tertiaryContainer to MaterialTheme.colorScheme.onTertiaryContainer
+        DivergenceLevel.SLIGHT ->
+            MaterialTheme.colorScheme.surfaceVariant to MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Text(
+        text = level.label,
+        style = MaterialTheme.typography.labelSmall,
+        color = fg,
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(bg)
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+    )
+}
+
+/**
+ * 评分分布条（RC.05.05 丰富化）：在 0–10 轨道上以高亮带表示各源最低→最高区间，并为每个来源画圆点标记，
+ * 使「评分差距」客观可视。仅呈现归一化数值，不下结论（RC.01 3.7）。少于 2 源时不绘制。
+ */
+@Composable
+private fun ScoreSpreadBar(sources: List<SourceScore>, modifier: Modifier = Modifier) {
+    if (sources.size < 2) return
+    val trackColor = MaterialTheme.colorScheme.surfaceVariant
+    val rangeColor = MaterialTheme.colorScheme.primary
+    val dotFill = MaterialTheme.colorScheme.surface
+    Canvas(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(18.dp),
+    ) {
+        val cy = size.height / 2f
+        val trackH = 6.dp.toPx()
+        val radius = 5.dp.toPx()
+        // 两端各留出圆点半径，避免端点圆点被裁切。
+        val left = radius
+        val usable = (size.width - radius * 2f).coerceAtLeast(1f)
+        fun xOf(score: Float): Float = left + (score / 10f).coerceIn(0f, 1f) * usable
+        drawRoundRect(
+            color = trackColor,
+            topLeft = Offset(0f, cy - trackH / 2f),
+            size = Size(size.width, trackH),
+            cornerRadius = CornerRadius(trackH / 2f),
+        )
+        val xs = sources.map { xOf(it.score) }
+        val minX = xs.minOrNull() ?: left
+        val maxX = xs.maxOrNull() ?: left
+        drawRoundRect(
+            color = rangeColor,
+            topLeft = Offset(minX, cy - trackH / 2f),
+            size = Size((maxX - minX).coerceAtLeast(trackH), trackH),
+            cornerRadius = CornerRadius(trackH / 2f),
+        )
+        xs.forEach { x ->
+            drawCircle(color = dotFill, radius = radius, center = Offset(x, cy))
+            drawCircle(
+                color = rangeColor,
+                radius = radius,
+                center = Offset(x, cy),
+                style = Stroke(width = 1.5.dp.toPx()),
+            )
         }
     }
 }

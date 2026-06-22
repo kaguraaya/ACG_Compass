@@ -189,9 +189,16 @@ private class FakeWorkRepository(
     override suspend fun overrideMatch(localId: String, chosen: SourceRef): AppResult<Unit> =
         AppResult.Success(Unit)
     override suspend fun loadPublicDiscovery(): AppResult<Int> = AppResult.Success(0)
-    override suspend fun loadBangumiRanking(
+    override suspend fun loadBangumiRankingPage(
         airDate: List<String>?,
-    ): AppResult<List<Pair<Work, com.acgcompass.domain.model.RatingEntry?>>> = AppResult.Success(emptyList())
+        offset: Int,
+        limit: Int,
+    ): AppResult<com.acgcompass.domain.repository.RankingPage> =
+        AppResult.Success(com.acgcompass.domain.repository.RankingPage(emptyList(), 0))
+    override suspend fun getCachedRanking(
+        scopeKey: String,
+    ): List<Pair<Work, com.acgcompass.domain.model.RatingEntry?>> = emptyList()
+    override suspend fun saveRankingCache(scopeKey: String, orderedWorkIds: List<String>) {}
 }
 
 /** 内存 Fake [ImportDao]，实现仓库使用到的方法。 */

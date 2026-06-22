@@ -40,6 +40,8 @@ class AiEngineImpl @Inject constructor(
 
     override suspend fun <T> run(task: AiTask<T>, options: AiRunOptions): AiRunResult<T> {
         val spec = AiTaskSpecs.specFor(task)
+        // 放宽 AI 结构化校验：用任务 schema 对模型输出做「类型就近矫正」，再交强类型解析（见 AiJsonCoercion）。
+        val schema = (spec.responseFormat as? AiResponseFormat.JsonSchema)?.schema
 
         // 成本确认（RC.14.05）：未确认则只返回估算，不发起任何请求。
         if (!options.confirmed) {
@@ -60,7 +62,7 @@ class AiEngineImpl @Inject constructor(
             is ProviderCall.Error -> return AiRunResult.Failure(r.error)
         }
 
-        parseValidatedScrubbed(task, firstRaw)?.let { return it }
+        parseValidatedScrubbed(task, firstRaw, schema)?.let { return it }
 
         // ---- 缺字段 / JSON 损坏 → 「修复成指定格式」二次请求（RC.14.03） ----
         val repairRaw = when (
@@ -72,7 +74,7 @@ class AiEngineImpl @Inject constructor(
             is ProviderCall.Error -> return lowConfidence(task, firstRaw, r.error)
         }
 
-        parseValidatedScrubbed(task, repairRaw)?.let { return it }
+        parseValidatedScrubbed(task, repairRaw, schema)?.let { return it }
 
         // ---- 仍失败 → 低置信兜底，不编造（RC.14.03/04） ----
         return lowConfidence(task, repairRaw, AppError.AiMalformed())
@@ -191,24 +193,30 @@ class AiEngineImpl @Inject constructor(
      *
      * @return 成功时返回 [AiRunResult.Success]；任一步失败返回 `null`（由调用方触发修复 / 兜底）。
      */
-    private fun <T> parseValidatedScrubbed(task: AiTask<T>, rawContent: String): AiRunResult.Success<T>? {
+    private fun <T> parseValidatedScrubbed(
+        task: AiTask<T>,
+        rawContent: String,
+        schema: JsonObject?,
+    ): AiRunResult.Success<T>? {
         val jsonText = extractJsonObjectText(rawContent)
         val element = runCatching { json.parseToJsonElement(jsonText) }.getOrNull() ?: return null
         val obj = element as? JsonObject ?: return null
         if (!hasAllRequired(obj, task.requiredFields)) return null
 
-        // 剧透过滤：净化所有字符串叶子后再解析（RC.14.04，支撑 Property 12）。
+        // 剧透过滤：净化所有字符串叶子（RC.14.04，支撑 Property 12）。
         val scrubbed = SpoilerGuard.scrubJson(obj)
-        val scrubbedText = json.encodeToString(JsonElement.serializer(), scrubbed)
-        val payload = runCatching { json.decodeFromString(task.serializer, scrubbedText) }
+        // 放宽 AI 结构化校验：依 schema 把数值/数组/字符串等类型偏差就近矫正，避免可用响应因小偏差被判失败。
+        val normalized = if (schema != null) AiJsonCoercion.coerce(scrubbed, schema) else scrubbed
+        val normalizedText = json.encodeToString(JsonElement.serializer(), normalized)
+        val payload = runCatching { json.decodeFromString(task.serializer, normalizedText) }
             .getOrNull() ?: return null
 
         return AiRunResult.Success(
             payload = payload,
             result = aiResult(
                 task = task,
-                payloadJson = scrubbedText,
-                confidence = extractConfidence(scrubbed),
+                payloadJson = normalizedText,
+                confidence = extractConfidence(normalized),
             ),
         )
     }

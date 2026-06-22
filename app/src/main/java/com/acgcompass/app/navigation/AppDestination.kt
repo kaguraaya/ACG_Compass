@@ -68,8 +68,13 @@ sealed interface AppDestination {
         override val route: String = "import"
     }
 
+    /**
+     * 「今晚看什么」推荐器（RC.11）。route 携带可选 `presetTags` 参数（首页今日状态预填的「想看标签」），
+     * 由 [com.acgcompass.feature.recommender.RECOMMENDER_ROUTE_PATTERN] 定义、
+     * [com.acgcompass.feature.recommender.recommenderRoute] 构造具体跳转路径（P2-8）。
+     */
     data object Recommender : AppDestination {
-        override val route: String = "recommender"
+        override val route: String = com.acgcompass.feature.recommender.RECOMMENDER_ROUTE_PATTERN
     }
 
     data object Onboarding : AppDestination {

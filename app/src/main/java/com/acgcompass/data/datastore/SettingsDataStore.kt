@@ -5,12 +5,14 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -119,6 +121,24 @@ class SettingsDataStore @Inject constructor(
         dataStore.edit { it[Keys.AUTO_SYNC_INTERVAL_MINUTES] = minutes.coerceAtLeast(0) }
     }
 
+    /** Phase④：推荐过滤的社区均分下限（0~10，0=不限）。 */
+    val recommendMinCommunityScore: Flow<Float> =
+        dataStore.data.map { it[Keys.RECOMMEND_MIN_COMMUNITY_SCORE] ?: SettingsState.DEFAULT_RECOMMEND_MIN_COMMUNITY_SCORE }
+
+    /** Phase④：设置推荐社区均分下限；钳到 0~10。 */
+    suspend fun setRecommendMinCommunityScore(score: Float) {
+        dataStore.edit { it[Keys.RECOMMEND_MIN_COMMUNITY_SCORE] = score.coerceIn(0f, 10f) }
+    }
+
+    /** Phase④：口味匹配度阈值（0~1，0=关闭该过滤）。 */
+    val tasteMatchThreshold: Flow<Float> =
+        dataStore.data.map { it[Keys.TASTE_MATCH_THRESHOLD] ?: SettingsState.DEFAULT_TASTE_MATCH_THRESHOLD }
+
+    /** Phase④：设置口味匹配度阈值；钳到 0~1。 */
+    suspend fun setTasteMatchThreshold(threshold: Float) {
+        dataStore.edit { it[Keys.TASTE_MATCH_THRESHOLD] = threshold.coerceIn(0f, 1f) }
+    }
+
     /** I17：待补池展示形态偏好——true=网格，false=列表。默认列表。 */
     val backlogGridMode: Flow<Boolean> =
         dataStore.data.map { it[Keys.BACKLOG_GRID_MODE] ?: false }
@@ -199,6 +219,9 @@ class SettingsDataStore @Inject constructor(
         dataStore.edit { it[Keys.DYNAMIC_COLOR] = enabled }
     }
 
+    // 注：榜单结果缓存（P2-3）已于 B-4 迁移到 Room `ranking_cache` 表（见 RankingCacheDao），
+    // 不再使用 Preferences；此处原 getRankingOrder/saveRankingOrder 已移除。
+
     /** 将原始 [Preferences] 映射为带默认值兜底的 [SettingsState]。 */
     private fun Preferences.toSettingsState(): SettingsState =
         SettingsState(
@@ -216,6 +239,8 @@ class SettingsDataStore @Inject constructor(
             bangumiApiBaseUrl = this[Keys.BANGUMI_API_BASE_URL] ?: SettingsState.DEFAULT_BANGUMI_API_BASE_URL,
             bangumiNonOfficialTokenConsent = this[Keys.BANGUMI_NONOFFICIAL_TOKEN_CONSENT] ?: false,
             autoSyncIntervalMinutes = this[Keys.AUTO_SYNC_INTERVAL_MINUTES] ?: SettingsState.DEFAULT_AUTO_SYNC_INTERVAL_MINUTES,
+            recommendMinCommunityScore = this[Keys.RECOMMEND_MIN_COMMUNITY_SCORE] ?: SettingsState.DEFAULT_RECOMMEND_MIN_COMMUNITY_SCORE,
+            tasteMatchThreshold = this[Keys.TASTE_MATCH_THRESHOLD] ?: SettingsState.DEFAULT_TASTE_MATCH_THRESHOLD,
         )
 
     /** 归一化 Base URL（R55）：trim、空白回退官方、补结尾斜杠。不校验可达性（由连接测试负责）。 */
@@ -244,6 +269,8 @@ class SettingsDataStore @Inject constructor(
         val HOME_MODULES = stringSetPreferencesKey("home_modules")
         val AUTO_SYNC_INTERVAL_MINUTES = intPreferencesKey("auto_sync_interval_minutes")
         val BACKLOG_GRID_MODE = booleanPreferencesKey("backlog_grid_mode")
+        val RECOMMEND_MIN_COMMUNITY_SCORE = floatPreferencesKey("recommend_min_community_score")
+        val TASTE_MATCH_THRESHOLD = floatPreferencesKey("taste_match_threshold")
     }
 }
 

@@ -13,12 +13,18 @@ import com.acgcompass.core.network.SourceOutcome
 import com.acgcompass.core.network.SourceRequest
 import com.acgcompass.core.ui.Cta
 import com.acgcompass.core.ui.UiState
+import com.acgcompass.data.datastore.SettingsDataStore
+import com.acgcompass.data.local.dao.RankingCacheDao
 import com.acgcompass.data.local.dao.RatingDao
 import com.acgcompass.data.local.dao.SourceLinkDao
+import com.acgcompass.data.local.dao.TagDao
 import com.acgcompass.data.local.dao.WorkDao
+import com.acgcompass.data.local.dao.WorkTagWithCategory
+import com.acgcompass.data.local.entity.RankingCacheEntity
 import com.acgcompass.data.local.entity.WorkEntity
 import com.acgcompass.data.local.mapper.toDomain
 import com.acgcompass.data.local.mapper.toEntity
+import com.acgcompass.data.local.mapper.toEntryOrNull
 import com.acgcompass.data.local.mapper.toRatingAggregate
 import com.acgcompass.data.local.mapper.toSourceRef
 import com.acgcompass.data.remote.anilist.AniListRemoteDataSource
@@ -36,8 +42,11 @@ import com.acgcompass.domain.matching.resolveLink
 import com.acgcompass.domain.model.RatingAggregate
 import com.acgcompass.domain.model.SourceId
 import com.acgcompass.domain.model.SourceRef
+import com.acgcompass.domain.model.Tag
+import com.acgcompass.domain.model.TagCategory
 import com.acgcompass.domain.model.Work
 import com.acgcompass.domain.model.WorkMatch
+import com.acgcompass.domain.repository.RankingPage
 import com.acgcompass.domain.repository.WorkRepository
 import com.acgcompass.domain.usecase.AggregateRatingsUseCase
 import kotlinx.coroutines.async
@@ -73,6 +82,8 @@ class WorkRepositoryImpl @Inject constructor(
     private val workDao: WorkDao,
     private val sourceLinkDao: SourceLinkDao,
     private val ratingDao: RatingDao,
+    private val tagDao: TagDao,
+    private val rankingCacheDao: RankingCacheDao,
     private val bangumi: BangumiRemoteDataSource,
     private val anilist: AniListRemoteDataSource,
     private val jikan: JikanRemoteDataSource,
@@ -81,6 +92,8 @@ class WorkRepositoryImpl @Inject constructor(
     private val orchestrator: DataSourceOrchestrator,
     private val aggregateRatingsUseCase: AggregateRatingsUseCase,
     private val dispatchers: DispatcherProvider,
+    private val settingsDataStore: SettingsDataStore,
+    private val workTagWriter: WorkTagWriter,
 ) : WorkRepository {
 
     // --- observeWork -------------------------------------------------------
@@ -110,8 +123,22 @@ class WorkRepositoryImpl @Inject constructor(
 
     override fun observeWorks(): Flow<List<Work>> =
         workDao.observeAll()
-            .map { entities -> entities.map { it.toDomain() } }
+            .map { entities ->
+                // P2-5/P2-6：回填作品社区标签——候选池/题材筛选/今晚看什么依赖真实 tag，
+                // 而 WorkEntity 不含 tags（存于连接表），故此处一次性 join 回填，避免列表恒空 tag。
+                val tagsByWork = tagsForWorks(entities.map { it.id })
+                entities.map { it.toDomain(tags = tagsByWork[it.id].orEmpty()) }
+            }
             .flowOn(dispatchers.io)
+
+    /** P2-5/P2-6：批量读取作品社区标签并按 workId 分组（分批避开 SQLite 变量上限）。 */
+    private suspend fun tagsForWorks(workIds: List<String>): Map<String, List<Tag>> {
+        if (workIds.isEmpty()) return emptyMap()
+        val rows: List<WorkTagWithCategory> = workIds.chunked(900).flatMap { tagDao.getTagsForWorks(it) }
+        return rows.groupBy({ it.workId }) { row ->
+            Tag(category = TagCategory.fromStorage(row.category) ?: TagCategory.CONTENT, name = row.name)
+        }
+    }
 
     // --- search ------------------------------------------------------------
 
@@ -143,8 +170,11 @@ class WorkRepositoryImpl @Inject constructor(
                 backfilled
                     .map { it.withRecomputedConfidence(query) }
                     .sortedWith(
-                        compareByDescending<WorkMatch> { it.matchConfidence }
-                            // 同置信度优先评分人数多的条目（避免同名小条目靠前），再按来源可信度裁决。
+                        // P0-1：用综合得分（相似度 + 评分人数对数加成，见 representativeScore）排序，
+                        // 让正片在相似度仅略低于同名小条目时仍凭评分人数靠前；再按人数、来源可信度裁决。
+                        compareByDescending<WorkMatch> {
+                            com.acgcompass.domain.matching.representativeScore(it.matchConfidence.toDouble(), it.popularity)
+                        }
                             .thenByDescending { it.popularity }
                             .thenBy { sourceCredibilityRank(it.sourceTag) },
                     )
@@ -182,8 +212,14 @@ class WorkRepositoryImpl @Inject constructor(
                     // 导致评分人数 / 简介错配（rep 已确认是动画，见上方 mediaType 判定）。
                     .filter { it.work.mediaType == com.acgcompass.domain.model.MediaType.ANIME }
                     .map { m -> m to candidateTitles(m).maxOf { matchConfidence(candidate = it, query = q) } }
-                    // 同相似度时优先评分人数多的条目，避免反查到同名小条目（评分人数异常偏低）。
-                    .maxWithOrNull(compareBy<Pair<WorkMatch, Double>>({ it.second }, { it.first.popularity }))
+                    // P0-1：用综合得分（相似度 + 评分人数对数加成，见 representativeScore）择优，
+                    // 让正片在相似度仅略低于续作/小条目时仍凭评分人数胜出（如正片 27330 人 vs 第二季 11 人）。
+                    .maxWithOrNull(
+                        compareBy<Pair<WorkMatch, Double>>(
+                            { com.acgcompass.domain.matching.representativeScore(it.second, it.first.popularity) },
+                            { it.first.popularity },
+                        ),
+                    )
                 if (best != null && best.second >= CROSS_MATCH_THRESHOLD) {
                     result += best.first.copy(matchConfidence = best.second.toFloat())
                     break
@@ -294,6 +330,9 @@ class WorkRepositoryImpl @Inject constructor(
             match.work.toEntity(createdAt = createdAt, updatedAt = now)
         }
         workDao.upsertAll(entities)
+        // P2-5/P2-6：同步持久化作品社区标签（tags+work_tags 连接表，WorkEntity 不含 tags）。经共享
+        // WorkTagWriter 写入，与个人收藏同步路径用一致的标签主键规则，修复候选池/题材筛选/今晚看什么标签恒空。
+        workTagWriter.persist(matches.map { it.work })
 
         // R42：跨源合并——把同一簇内每个来源的链接都指向「代表作品 id」，使详情页 aggregateRatings
         // 能汇总多平台评分；通用聚类规则见 domain/matching/CrossSourceMerge（无样例硬编码）。
@@ -353,7 +392,7 @@ class WorkRepositoryImpl @Inject constructor(
                 for (page in 0 until 3) {
                     val pageData = (
                         bangumi.searchRankedSubjects(limit = 50, offset = page * 50) as? AppResult.Success
-                        )?.data.orEmpty()
+                        )?.data?.items.orEmpty()
                     if (pageData.isEmpty()) break
                     addAll(pageData)
                 }
@@ -361,7 +400,7 @@ class WorkRepositoryImpl @Inject constructor(
             val seasonRange = currentSeasonAirDateRange()
             val rankedSeason =
                 (bangumi.searchRankedSubjects(airDate = seasonRange, limit = 30) as? AppResult.Success)
-                    ?.data.orEmpty()
+                    ?.data?.items.orEmpty()
             (rankedOverall + rankedSeason).forEach { (match, entry) ->
                 allMatches += match
                 if (entry != null) ratingRows += Triple(match.work.id, SourceId.BANGUMI, entry)
@@ -411,29 +450,24 @@ class WorkRepositoryImpl @Inject constructor(
         return listOf(">=${start.format(fmt)}", "<${end.format(fmt)}")
     }
 
-    override suspend fun loadBangumiRanking(
+    override suspend fun loadBangumiRankingPage(
         airDate: List<String>?,
-    ): AppResult<List<Pair<Work, com.acgcompass.domain.model.RatingEntry?>>> = withContext(dispatchers.io) {
+        offset: Int,
+        limit: Int,
+    ): AppResult<RankingPage> = withContext(dispatchers.io) {
         runCatchingApp {
-            // Q5：分页拉取真实排行（每页 50，最多 3 页 ≈ 150），扩充榜单条数。
-            val ranked = buildList {
-                for (page in 0 until 3) {
-                    val pageData = when (
-                        val r = bangumi.searchRankedSubjects(airDate = airDate, limit = 50, offset = page * 50)
-                    ) {
-                        is AppResult.Success -> r.data
-                        is AppResult.Failure -> if (page == 0) throw r.error.asException() else emptyList()
-                    }
-                    if (pageData.isEmpty()) break
-                    addAll(pageData)
-                }
+            // P2-2：按 offset/limit 拉取真实排行的一页（Bangumi 已按 rank 排序，跨页顺序由 offset 维持）。
+            val page = when (
+                val r = bangumi.searchRankedSubjects(airDate = airDate, limit = limit, offset = offset)
+            ) {
+                is AppResult.Success -> r.data
+                is AppResult.Failure -> throw r.error.asException()
             }
-            if (ranked.isEmpty()) {
-                throw AppError.Network(cause = "未能获取榜单，请检查网络后重试").asException()
-            }
-            // 写入 Room（详情可跳转）+ 写各源评分行；跨源聚类由 persistMatches 处理。
-            persistMatches(ranked.map { it.first })
-            ranked.forEach { (match, entry) ->
+            val pageData = page.items
+            // 写入 Room（详情可跳转 + 冷启动重建卡片）+ 写 Bangumi 评分行；跨源聚类由 persistMatches 处理。
+            // 空页（分页到底）属正常：persistMatches 对空列表直接返回。
+            persistMatches(pageData.map { it.first })
+            pageData.forEach { (match, entry) ->
                 if (entry != null) {
                     ratingDao.upsert(
                         entry.toEntity(
@@ -444,8 +478,33 @@ class WorkRepositoryImpl @Inject constructor(
                     )
                 }
             }
-            ranked.map { (match, entry) -> match.work to entry }
+            // P2-2：返回该页作品 + 过滤后总数，供上层用 total 判定是否还有更多页（不依赖返回数 >= limit）。
+            RankingPage(
+                items = pageData.map { (match, entry) -> match.work to entry },
+                total = page.total,
+            )
         }
+    }
+
+    override suspend fun getCachedRanking(
+        scopeKey: String,
+    ): List<Pair<Work, com.acgcompass.domain.model.RatingEntry?>> = withContext(dispatchers.io) {
+        // P2-3 / B-4：按 Room `ranking_cache` 表缓存的有序作品 id 重建榜单卡片所需的作品 + Bangumi 评分；
+        // 作品已被清理的行安全跳过（容错缓存）。
+        rankingCacheDao.getByScope(scopeKey).mapNotNull { row ->
+            val work = workDao.getById(row.workId)?.toDomain() ?: return@mapNotNull null
+            val entry = ratingDao.getByWorkAndSource(row.workId, SourceId.BANGUMI.name)?.toEntryOrNull()
+            work to entry
+        }
+    }
+
+    override suspend fun saveRankingCache(scopeKey: String, orderedWorkIds: List<String>) {
+        // P2-3 / B-4：整范围覆盖写入 Room（单事务）。position 即真实排名次序，cachedAt 供后续新鲜度判断。
+        val now = System.currentTimeMillis()
+        val rows = orderedWorkIds.mapIndexed { index, id ->
+            RankingCacheEntity(scopeKey = scopeKey, position = index, workId = id, cachedAt = now)
+        }
+        rankingCacheDao.replaceScope(scopeKey, rows)
     }
 
     override suspend fun aggregateRatings(workId: String): AppResult<RatingAggregate> =
@@ -622,9 +681,21 @@ class WorkRepositoryImpl @Inject constructor(
                         }
                         m to conf
                     }
-                    // 同相似度时优先评分人数多的条目，避免取到同名小条目的评分（人数异常偏低）。
-                    .maxWithOrNull(compareBy<Pair<WorkMatch, Double>>({ it.second }, { it.first.popularity }))
-                if (localBest != null && (best == null || localBest.second > best!!.second)) {
+                    // P0-1：用综合得分（相似度 + 评分人数对数加成，见 representativeScore）择优，
+                    // 让正片在相似度仅略低于续作/小条目时仍凭评分人数胜出（如正片 27330 人 vs 第二季 11 人）。
+                    .maxWithOrNull(
+                        compareBy<Pair<WorkMatch, Double>>(
+                            { com.acgcompass.domain.matching.representativeScore(it.second, it.first.popularity) },
+                            { it.first.popularity },
+                        ),
+                    )
+                // P0-1：跨标题变体也按综合得分比较，避免某变体命中续作（相似度略高、人数极少）顶替正片。
+                if (localBest != null && (
+                        best == null ||
+                            com.acgcompass.domain.matching.representativeScore(localBest.second, localBest.first.popularity) >
+                            com.acgcompass.domain.matching.representativeScore(best!!.second, best!!.first.popularity)
+                        )
+                ) {
                     best = localBest
                 }
                 if (best != null && best!!.second >= 0.97) break // 已极高，提前结束省请求

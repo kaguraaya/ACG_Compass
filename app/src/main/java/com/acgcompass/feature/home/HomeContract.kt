@@ -25,10 +25,8 @@ import com.acgcompass.data.credential.SourceId as CredentialSourceId
  * 任务边界：同步提醒（[syncReminder]）与今日补番签（[dailyDraw]）由任务 20.2 实现。
  */
 data class HomeUiState(
-    /** 今日状态选择 chips（RC.04.02）。 */
+    /** P2-8：今日状态——重定义为「今晚看什么」快捷入口的心情 chips（点击带预填标签跳推荐器）。 */
     val moods: List<HomeMood> = HomeMood.DEFAULTS,
-    /** 当前选中的今日状态；`null` 表示未选择。 */
-    val selectedMood: HomeMood? = null,
     /** 继续看 / 读 / 玩区（RC.04.03）。当前无进度数据源时为空，由界面渲染友好占位。 */
     val continueItems: List<ContinueItem> = emptyList(),
     /** 待补池概览（RC.04.04）。 */
@@ -44,24 +42,27 @@ data class HomeUiState(
 )
 
 /**
- * 今日状态（心情）选项（RC.04.02）。[action] 为稳定标识，供后续推荐器 / 抽番作为硬过滤心情标签使用。
+ * 今日状态（心情）选项（RC.04.02）。P2-8：重定义为「今晚看什么」快捷入口——点击某心情即带着 [presetTags]
+ * 跳转推荐器并预填「想看的标签」筛选。[action] 为稳定标识；[presetTags] 为该心情映射的社区标签关键词
+ * （命中作品社区标签即算匹配，空则不预填、仅进入推荐器）。
  */
 data class HomeMood(
     val label: String,
     val action: String,
+    val presetTags: List<String> = emptyList(),
 ) {
     companion object {
-        /** 默认今日状态选项（RC.04.02）。 */
+        /** 默认今日状态选项（RC.04.02）。P2-8：每项映射到推荐器的预填标签。 */
         val DEFAULTS: List<HomeMood> = listOf(
-            HomeMood("轻松", "relaxed"),
-            HomeMood("胃疼", "gut_punch"),
-            HomeMood("热血", "hot_blooded"),
-            HomeMood("恋爱", "romance"),
-            HomeMood("悬疑", "mystery"),
-            HomeMood("神作补课", "masterpiece"),
-            HomeMood("短篇", "short"),
-            HomeMood("想被震撼", "mind_blown"),
-            HomeMood("电波", "niche"),
+            HomeMood("轻松", "relaxed", listOf("日常", "治愈", "搞笑")),
+            HomeMood("胃疼", "gut_punch", listOf("致郁")),
+            HomeMood("热血", "hot_blooded", listOf("热血")),
+            HomeMood("恋爱", "romance", listOf("恋爱")),
+            HomeMood("悬疑", "mystery", listOf("悬疑", "推理")),
+            HomeMood("神作补课", "masterpiece", listOf("神作")),
+            HomeMood("短篇", "short", emptyList()),
+            HomeMood("想被震撼", "mind_blown", listOf("名作之壁", "神作")),
+            HomeMood("电波", "niche", listOf("电波")),
         )
     }
 }

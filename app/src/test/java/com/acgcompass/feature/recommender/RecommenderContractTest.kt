@@ -38,7 +38,7 @@ class RecommenderContractTest : StringSpec({
         RecommenderInput().canSubmit.shouldBeFalse()
     }
 
-    "选择时间后可提交（心情 / 接受程度可空）" {
+    "选择时间后可提交（标签 / 接受程度可空）" {
         RecommenderInput(time = TimeBudget.ONE_HOUR).canSubmit.shouldBeTrue()
     }
 
@@ -99,12 +99,12 @@ class RecommenderContractTest : StringSpec({
 
     // endregion
 
-    // region 心情与硬过滤（RC.11.02/03/08）
+    // region 标签与硬过滤（RC.11.02/03/08）
 
-    "稳妥 / 赌一把保留心情命中，神经病忽略心情" {
+    "稳妥 / 赌一把保留标签命中，神经病忽略标签" {
         val input = RecommenderInput(
             time = TimeBudget.WEEKEND,
-            moods = setOf(MoodOption.RELAXED, MoodOption.HOT_BLOODED),
+            selectedTags = setOf("轻松", "热血"),
         )
         input.toDrawCriteria(RecommendationKind.SAFE).moodTags shouldBe setOf("轻松", "热血")
         input.toDrawCriteria(RecommendationKind.WILDCARD).moodTags shouldBe emptySet()

@@ -34,4 +34,14 @@ interface TasteProfileRepository {
      * @return 成功时为新生成的 [TasteProfile]；失败时为 [AppResult.Failure]。
      */
     suspend fun importAndCompute(records: List<TasteInputRecord>): AppResult<TasteProfile>
+
+    /**
+     * 用当前本地 `user_collections`（评分 / 状态 / 短评 / 标签）重新计算并持久化口味画像。
+     *
+     * 供「打分 / 评价后自动刷新画像」（B-1）调用：用户在详情页保存或清空记录后即时反映到口味画像，
+     * 无需手动重新导入。无任何本地记录时不生成画像（不伪造），返回 `Success(null)`。
+     *
+     * @return 成功时为新画像（无样本时为 `null`）；失败时为 [AppResult.Failure]。
+     */
+    suspend fun recomputeFromLocal(): AppResult<TasteProfile?>
 }

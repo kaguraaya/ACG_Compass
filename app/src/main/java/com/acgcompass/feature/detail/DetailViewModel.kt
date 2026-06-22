@@ -60,7 +60,7 @@ import javax.inject.Inject
 class DetailViewModel @Inject constructor(
     private val workRepository: WorkRepository,
     private val backlogRepository: BacklogRepository,
-    tasteProfileRepository: TasteProfileRepository,
+    private val tasteProfileRepository: TasteProfileRepository,
     private val generateSpoilerRadar: GenerateSpoilerRadarUseCase,
     private val bangumiDataSource: com.acgcompass.data.remote.bangumi.BangumiRemoteDataSource,
     private val aiEngine: AiEngine,
@@ -93,6 +93,14 @@ class DetailViewModel @Inject constructor(
 
     /** 消费一次性提示。 */
     fun consumeRecordMessage() { _recordMessage.value = null }
+
+    /**
+     * B-1：打分 / 评价 / 状态保存或清空后，用最新本地收藏重算口味画像（best-effort，不阻塞保存反馈）。
+     * 失败静默——画像刷新失败绝不影响「我的记录」保存本身。
+     */
+    private fun refreshTasteProfileFromLocal() {
+        viewModelScope.launch { runCatching { tasteProfileRepository.recomputeFromLocal() } }
+    }
 
     /** E：「AI 分析匹配度」按钮状态（RC.10.03 / RC.14）。初始为 [AiMatchUi.Idle]。 */
     private val _aiMatch = MutableStateFlow<AiMatchUi>(AiMatchUi.Idle)
@@ -235,6 +243,8 @@ class DetailViewModel @Inject constructor(
         viewModelScope.launch {
             if (backlogMembership.value.inBacklog) {
                 backlogRepository.bulk(BulkOp.DELETE, listOf(work.id))
+                // P1-2：移出待补池即「取消想看」（与 markWantToWatch 对称）——同步清理本地「想看」记录并尽力清理 Bangumi。
+                removeWantToWatch(work)
             } else {
                 backlogRepository.addAll(listOf(work))
                 // H4：加入待补池默认置「想看」，写本地 user_collections 并回写 Bangumi（已配置时）。
@@ -269,6 +279,39 @@ class DetailViewModel @Inject constructor(
         val configured = credentialStore.observeStatus().first()[CredentialSourceId.BANGUMI]?.configured == true
         if (!configured) return
         runCatching { bangumiDataSource.updateUserCollection(subjectId = subjectId, type = 1) }
+    }
+
+    /**
+     * P1-2：取消「想看」（与 [markWantToWatch] 对称，由移出待补池触发）。
+     *
+     * 仅当当前状态为「想看」（未升级为在看/看过/搁置/抛弃）时才清理，避免误删已有的观看记录：
+     * - 本地：删除该作品的 user_collections「想看」记录，保持与待补池一致。
+     * - Bangumi：v0 开放 API 无删除收藏端点，无法真正移除「想看」收藏；遵循「不抓网页」原则（RC.01 3.11），
+     *   仅尽力清除评分/短评/标签，并明确提示「想看」收藏需在 Bangumi 网页移除（绝不伪造已删，RC.01 3.7）。
+     */
+    private suspend fun removeWantToWatch(work: Work) {
+        val existing = userCollectionDao.getByWork(work.id)
+        if (existing == null) {
+            _recordMessage.value = "已移出待补池"
+            return
+        }
+        // 已升级为在看/看过/搁置/抛弃：仅移出待补池，保留观看记录，不取消收藏。
+        if (existing.status != "想看") {
+            _recordMessage.value = "已移出待补池（保留你的「${existing.status}」记录）"
+            return
+        }
+        userCollectionDao.deleteByWork(work.id)
+        val subjectId = resolveBangumiSubjectId(work)
+        val configured = credentialStore.observeStatus().first()[CredentialSourceId.BANGUMI]?.configured == true
+        if (subjectId == null || !configured) {
+            _recordMessage.value = "已取消想看（本地）"
+            return
+        }
+        // Bangumi v0 无删除收藏端点：尽力清除评分/短评/标签；收藏状态本身需用户在网页移除。
+        runCatching {
+            bangumiDataSource.updateUserCollection(subjectId = subjectId, rate = 0, comment = "", tags = emptyList())
+        }
+        _recordMessage.value = "已取消本地想看；Bangumi 不支持 API 删除收藏，如需云端移除请在 Bangumi 网页操作"
     }
 
     private fun loadRatings() {
@@ -676,6 +719,11 @@ class DetailViewModel @Inject constructor(
                 comment.isNullOrBlank() && tags.isNullOrEmpty()
             if (fullyCleared) {
                 if (existing != null) userCollectionDao.deleteByWork(workId)
+                // K6 续：清空全部记录即「不再追踪」——一并移出待补池/吃灰馆，避免 user_collections 已删却仍
+                // 滞留待补池的不一致（与「移出待补池」对称地移除全部本地收藏状态）。
+                backlogRepository.bulk(BulkOp.DELETE, listOf(workId))
+                // B-1：清空记录后用最新本地收藏重算口味画像。
+                refreshTasteProfileFromLocal()
                 // N2：清空时同步清除 Bangumi 端评分 / 短评 / 标签（rate=0、空），避免下次同步又拉回。
                 // 注：Bangumi v0 无「删除收藏状态」端点，收藏状态本身需在 Bangumi 网页移除。
                 if (subjectId != null && configured) {
@@ -713,6 +761,8 @@ class DetailViewModel @Inject constructor(
                     sourceUpdatedAt = existing?.sourceUpdatedAt,
                 ),
             )
+            // B-1：保存评分 / 评价 / 状态后用最新本地收藏重算口味画像。
+            refreshTasteProfileFromLocal()
 
             if (subjectId == null) {
                 _recordMessage.value = "已本地保存（该作品在 Bangumi 无对应词条，仅本地，不同步）"

@@ -27,6 +27,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -56,6 +57,8 @@ internal fun CoverViewerDialog(
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     var scale by remember { mutableStateOf(1f) }
+    // P2-1：放大后的平移偏移；缩放回 1 时归零，避免图片卡在偏移位置无法复位。
+    var offset by remember { mutableStateOf(Offset.Zero) }
     var saving by remember { mutableStateOf(false) }
 
     Dialog(
@@ -78,11 +81,19 @@ internal fun CoverViewerDialog(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(16.dp)
-                    .graphicsLayer(scaleX = scale, scaleY = scale)
-                    // 图片自身消费缩放手势，避免触发外层「点击关闭」。
+                    .graphicsLayer(
+                        scaleX = scale,
+                        scaleY = scale,
+                        translationX = offset.x,
+                        translationY = offset.y,
+                    )
+                    // P2-1：图片自身消费缩放 + 拖动手势（放大后可平移浏览），避免触发外层「点击关闭」。
                     .pointerInput("zoom") {
-                        detectTransformGestures { _, _, zoom, _ ->
+                        detectTransformGestures { _, pan, zoom, _ ->
                             scale = (scale * zoom).coerceIn(1f, 5f)
+                            // pan 处于缩放后图层的局部坐标（≈屏幕位移/scale），而 translation 以屏幕像素平移，
+                            // 故乘回 scale 抵消，放大后拖动才与手指 1:1 跟手（P2-1）。
+                            offset = if (scale > 1f) offset + pan * scale else Offset.Zero
                         }
                     },
             )

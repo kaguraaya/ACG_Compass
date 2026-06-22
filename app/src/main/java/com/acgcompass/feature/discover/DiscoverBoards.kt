@@ -164,6 +164,8 @@ internal const val SCORE_DIFF_NEUTRAL_NOTE: String =
  * @property spread 归一化（0–10 标度）后的最大评分差距。
  * @property spreadLabel 评分差距展示文案（如「评分差距 2.3」）。
  * @property perSourceLabels 各源评分明细（如「Bangumi 8.1 / AniList 6.2」），用于中性呈现差异来源。
+ * @property divergenceLevel 分歧程度分级（按归一化差距），用于语义化徽标。
+ * @property sourceScores 各源归一化评分（0–10），用于分布条可视化。
  */
 data class ScoreDiffItem(
     val workId: String,
@@ -171,7 +173,39 @@ data class ScoreDiffItem(
     val spread: Float,
     val spreadLabel: String,
     val perSourceLabels: List<String>,
+    val divergenceLevel: DivergenceLevel,
+    val sourceScores: List<SourceScore>,
 )
+
+/** 评分差异榜中单个来源的归一化评分（0–10 标度），用于分布条可视化（RC.05.05）。 */
+data class SourceScore(
+    val label: String,
+    val score: Float,
+)
+
+/**
+ * 评分分歧程度分级（按归一化差距 [scoreSpread]），用于评分差异栏的语义化徽标。
+ * 措辞中性，仅描述客观差距大小，不对作品质量/口味下结论（RC.05.05 / RC.01 3.7）。
+ */
+enum class DivergenceLevel(val label: String) {
+    /** 轻微分歧：达到入榜阈值但差距较小。 */
+    SLIGHT("轻微分歧"),
+
+    /** 明显分歧。 */
+    NOTABLE("明显分歧"),
+
+    /** 显著分歧：差距很大，最值得留意圈层口味差异。 */
+    STRONG("显著分歧");
+
+    companion object {
+        /** 由归一化评分差距映射分歧等级。 */
+        fun of(spread: Float): DivergenceLevel = when {
+            spread >= 3.5f -> STRONG
+            spread >= 2.5f -> NOTABLE
+            else -> SLIGHT
+        }
+    }
+}
 
 /**
  * 把各源原始评分线性归一到统一的 0–10 标度，使跨社区评分可比较（RC.05.05）。
@@ -214,15 +248,18 @@ internal fun buildScoreDiffBoard(works: List<WorkRatings>): List<ScoreDiffItem> 
         val ratings = wr.ratings ?: return@mapNotNull null
         val spread = scoreSpread(ratings.perSource) ?: return@mapNotNull null
         if (spread < SCORE_DIFF_THRESHOLD) return@mapNotNull null
+        // 各源归一化评分（0–10），供分布条与文字明细复用，保证两者口径一致。
+        val sourceScores = ratings.perSource.entries.mapNotNull { (source, entry) ->
+            entry?.let { SourceScore(source.discoverLabel(), normalizeScore(source, it.score)) }
+        }
         ScoreDiffItem(
             workId = wr.work.id,
             card = wr.toFilteredCard(),
             spread = spread,
             spreadLabel = "评分差距 ${formatScore(spread)}",
-            perSourceLabels = ratings.perSource.entries
-                .mapNotNull { (source, entry) ->
-                    entry?.let { "${source.discoverLabel()} ${formatScore(normalizeScore(source, it.score))}" }
-                },
+            perSourceLabels = sourceScores.map { "${it.label} ${formatScore(it.score)}" },
+            divergenceLevel = DivergenceLevel.of(spread),
+            sourceScores = sourceScores,
         )
     }.sortedByDescending { it.spread }
 

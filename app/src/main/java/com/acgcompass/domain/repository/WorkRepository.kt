@@ -80,9 +80,33 @@ interface WorkRepository {
     suspend fun loadPublicDiscovery(): AppResult<Int>
 
     /**
-     * M2（L2b）：按范围加载 Bangumi 真实排行榜（`sort=rank`）。总榜（airDate=null）/ 今年 / 本季由
-     * [airDate] 过滤区间决定（如 `[">=2026-01-01", "<2027-01-01"]`）。命中作品写入 Room（详情可跳转），
-     * 返回作品 + 该源评分（缺失为 null，不伪造），按排名顺序。网络失败返回 [AppResult.Failure]。
+     * M2（L2b）/ P2-2：按范围分页加载 Bangumi 真实排行榜的**一页**（`sort=rank`，offset/limit）。
+     * 总榜（airDate=null）/ 今年 / 本季由 [airDate] 过滤区间决定（如 `[">=2026-01-01", "<2027-01-01"]`）。
+     * 命中作品 + 该源评分写入 Room（详情可跳转、冷启动可重建卡片），返回该页作品 + 评分（缺失为 null，不伪造），
+     * 按真实排名顺序。空页（分页到底）属正常，返回空列表；仅网络/解析失败返回 [AppResult.Failure]。
      */
-    suspend fun loadBangumiRanking(airDate: List<String>?): AppResult<List<Pair<Work, com.acgcompass.domain.model.RatingEntry?>>>
+    suspend fun loadBangumiRankingPage(
+        airDate: List<String>?,
+        offset: Int,
+        limit: Int,
+    ): AppResult<RankingPage>
+
+    /**
+     * P2-3：读取某榜单范围已持久化的缓存（冷启动秒开）。按缓存的有序作品 id 从 Room 重建作品 + Bangumi 评分；
+     * 无缓存或作品已被清理时返回空。[scopeKey] 为范围稳定键（如 OVERALL/YEAR/SEASON）。
+     */
+    suspend fun getCachedRanking(scopeKey: String): List<Pair<Work, com.acgcompass.domain.model.RatingEntry?>>
+
+    /** P2-3：持久化某榜单范围的有序作品 id（覆盖写），供下次冷启动秒开。 */
+    suspend fun saveRankingCache(scopeKey: String, orderedWorkIds: List<String>)
 }
+
+/**
+ * P2-2：榜单分页结果。[items] 为该页作品 + Bangumi 评分（按真实排名顺序，缺失评分为 null）；
+ * [total] 为该范围过滤后的总条目数（来自 Bangumi 分页响应），供上层判断是否还有更多页——
+ * 据此修复「某页返回数 < limit 即误判到底」（Bangumi 实验性搜索分页可能返回少于 limit 条）。
+ */
+data class RankingPage(
+    val items: List<Pair<Work, com.acgcompass.domain.model.RatingEntry?>>,
+    val total: Int,
+)

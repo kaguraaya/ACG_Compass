@@ -187,7 +187,7 @@ class DiscoverViewModel @Inject constructor(
         }
         // M2：进入榜单时按需加载一次真实排行（默认总榜）。
         if (tab == DiscoverTab.RANKING && scopedRanking.value is UiState.Loading) {
-            loadScopedRanking(_rankingScope.value)
+            loadInitialRanking(_rankingScope.value)
         }
     }
 
@@ -203,50 +203,131 @@ class DiscoverViewModel @Inject constructor(
     /** 当前范围的 Bangumi 真实排行榜（七态）。 */
     val scopedRanking: StateFlow<UiState<List<RankedWork>>> = _scopedRanking.asStateFlow()
 
-    /** 选择榜单范围（总榜 / 今年 / 本季）并加载真实排行。 */
+    private val _rankingLoadingMore = MutableStateFlow(false)
+
+    /** P2-2：是否正在加载下一页榜单（触底加载更多时的页脚指示）。 */
+    val rankingLoadingMore: StateFlow<Boolean> = _rankingLoadingMore.asStateFlow()
+
+    private val _rankingCanLoadMore = MutableStateFlow(true)
+
+    /** P2-2：当前范围是否还有更多可加载（分页到底后置 false，隐藏「加载更多」）。 */
+    val rankingCanLoadMore: StateFlow<Boolean> = _rankingCanLoadMore.asStateFlow()
+
+    /** P2-2/P2-3：某范围的分页累积状态（会话内存）。[nextOffset] 为下一页的真实排名 offset。 */
+    private data class RankingScopeState(
+        val items: List<RankedWork>,
+        val nextOffset: Int,
+        val canLoadMore: Boolean,
+    )
+
+    /** 各范围已累积的榜单分页状态，切回不重载（替代旧的整段内存缓存）。 */
+    private val scopeStates = mutableMapOf<RankingScope, RankingScopeState>()
+
+    /** 选择榜单范围（总榜 / 今年 / 本季）。命中会话状态直接用，否则走「缓存秒开 + 联网刷新首页」。 */
     fun onSelectRankingScope(scope: RankingScope) {
         if (_rankingScope.value == scope && _scopedRanking.value is UiState.Success) return
         _rankingScope.value = scope
-        // Q17：命中内存缓存则直接用（切回不重载）；否则加载。
-        val cached = rankingCache[scope]
+        val cached = scopeStates[scope]
         if (cached != null) {
-            _scopedRanking.value = if (cached.isEmpty()) UiState.Empty(NO_RANKING_CTA) else UiState.Success(cached)
+            publishScopeState(cached)
         } else {
-            loadScopedRanking(scope)
+            loadInitialRanking(scope)
         }
     }
 
-    /** 重试 / 刷新当前范围排行（强制重载，忽略缓存）。 */
+    /** 重试 / 刷新当前范围排行（强制重载，丢弃会话累积）。 */
     fun onRetryRanking() {
-        rankingCache.remove(_rankingScope.value)
-        loadScopedRanking(_rankingScope.value)
+        scopeStates.remove(_rankingScope.value)
+        loadInitialRanking(_rankingScope.value)
     }
 
-    /** Q17：榜单按范围的内存缓存，避免每次进入/切换都重新联网。 */
-    private val rankingCache = mutableMapOf<RankingScope, List<RankedWork>>()
+    /** 把某范围的累积状态发布到对外 StateFlow（含可加载更多标记）。 */
+    private fun publishScopeState(state: RankingScopeState) {
+        _scopedRanking.value =
+            if (state.items.isEmpty()) UiState.Empty(NO_RANKING_CTA) else UiState.Success(state.items)
+        _rankingCanLoadMore.value = state.canLoadMore
+        _rankingLoadingMore.value = false
+    }
 
-    private fun loadScopedRanking(scope: RankingScope) {
-        // 已有缓存且不是强制刷新场景时不重复加载。
-        rankingCache[scope]?.let { cached ->
-            _scopedRanking.value = if (cached.isEmpty()) UiState.Empty(NO_RANKING_CTA) else UiState.Success(cached)
-            return
-        }
-        _scopedRanking.value = UiState.Loading
+    /**
+     * 加载某范围榜单首页（offset=0）。
+     * P2-3：先用本地持久化缓存秒开（若有），再联网刷新首页并覆盖；联网失败且无缓存时显示错误态。
+     */
+    private fun loadInitialRanking(scope: RankingScope) {
+        scopeStates[scope]?.let { publishScopeState(it); return }
+        _rankingLoadingMore.value = false
+        _rankingCanLoadMore.value = true
         viewModelScope.launch {
-            val airDate = when (scope) {
-                RankingScope.OVERALL -> null
-                RankingScope.YEAR -> yearAirDateRange()
-                RankingScope.SEASON -> seasonAirDateRange()
+            // P2-3：冷启动缓存——立即展示上次持久化的榜单顺序，避免白屏等待网络。
+            val cached = workRepository.getCachedRanking(scope.name)
+            if (cached.isNotEmpty()) {
+                _scopedRanking.value = UiState.Success(cached.map { (w, e) -> rankedCardOf(w, e) })
+            } else {
+                _scopedRanking.value = UiState.Loading
             }
-            _scopedRanking.value = when (val r = workRepository.loadBangumiRanking(airDate)) {
+            // 联网刷新首页。
+            when (val r = workRepository.loadBangumiRankingPage(airDateOf(scope), offset = 0, limit = RANKING_PAGE_SIZE)) {
                 is AppResult.Success -> {
-                    val items = r.data.map { (work, entry) -> rankedCardOf(work, entry) }
-                    rankingCache[scope] = items
-                    if (items.isEmpty()) UiState.Empty(NO_RANKING_CTA) else UiState.Success(items)
+                    val page = r.data
+                    val items = page.items.map { (w, e) -> rankedCardOf(w, e) }
+                    val state = RankingScopeState(
+                        items = items,
+                        // P2-2：offset 按实际返回数推进（某页短返回也不跳号）；canLoadMore 用 total 判定。
+                        nextOffset = items.size,
+                        canLoadMore = items.isNotEmpty() && items.size < page.total,
+                    )
+                    scopeStates[scope] = state
+                    publishScopeState(state)
+                    workRepository.saveRankingCache(scope.name, items.map { it.workId })
                 }
-                is AppResult.Failure -> r.error.toUiState()
+                is AppResult.Failure -> {
+                    // 已用缓存秒开则保留缓存内容，仅在无缓存时显示错误态。
+                    if (_scopedRanking.value !is UiState.Success) {
+                        _scopedRanking.value = r.error.toUiState()
+                    }
+                }
             }
         }
+    }
+
+    /** P2-2：触底加载下一页并追加（按真实排名 offset 递增，跨页去重）。 */
+    fun onLoadMoreRanking() {
+        val scope = _rankingScope.value
+        val state = scopeStates[scope] ?: return
+        if (!state.canLoadMore || _rankingLoadingMore.value) return
+        _rankingLoadingMore.value = true
+        viewModelScope.launch {
+            when (val r = workRepository.loadBangumiRankingPage(airDateOf(scope), offset = state.nextOffset, limit = RANKING_PAGE_SIZE)) {
+                is AppResult.Success -> {
+                    val page = r.data
+                    val existingIds = state.items.mapTo(mutableSetOf()) { it.workId }
+                    val appended = page.items.map { (w, e) -> rankedCardOf(w, e) }
+                        .filter { it.workId !in existingIds }
+                    val merged = state.items + appended
+                    // P2-2：offset 按服务端本页返回数推进（非 RANKING_PAGE_SIZE，避免短返回跳号）；
+                    // canLoadMore 用 total 判定，并以「本页非空」兜底防空页死循环。
+                    val newNextOffset = state.nextOffset + page.items.size
+                    val newState = RankingScopeState(
+                        items = merged,
+                        nextOffset = newNextOffset,
+                        canLoadMore = page.items.isNotEmpty() && newNextOffset < page.total,
+                    )
+                    scopeStates[scope] = newState
+                    publishScopeState(newState)
+                    workRepository.saveRankingCache(scope.name, merged.map { it.workId })
+                }
+                is AppResult.Failure -> {
+                    // 加载更多失败：保留已加载内容，停掉指示，下次触底可重试。
+                    _rankingLoadingMore.value = false
+                }
+            }
+        }
+    }
+
+    private fun airDateOf(scope: RankingScope): List<String>? = when (scope) {
+        RankingScope.OVERALL -> null
+        RankingScope.YEAR -> yearAirDateRange()
+        RankingScope.SEASON -> seasonAirDateRange()
     }
 
     private fun yearAirDateRange(): List<String> {
@@ -358,6 +439,9 @@ class DiscoverViewModel @Inject constructor(
     private companion object {
         const val STOP_TIMEOUT_MS = 5_000L
         const val DEBOUNCE_MS = 350L
+
+        /** P2-2：榜单每页条数（触底加载更多的步长）。 */
+        const val RANKING_PAGE_SIZE = 30
     }
 }
 

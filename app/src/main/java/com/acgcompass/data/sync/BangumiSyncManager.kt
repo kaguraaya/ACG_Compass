@@ -13,6 +13,8 @@ import com.acgcompass.data.local.mapper.toEntity
 import com.acgcompass.data.remote.bangumi.BangumiRemoteDataSource
 import com.acgcompass.data.remote.bangumi.BangumiUserSubjectCollectionDto
 import com.acgcompass.data.remote.bangumi.toWork
+import com.acgcompass.data.repository.WorkTagWriter
+import com.acgcompass.domain.usecase.TasteTagTaxonomy
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -44,6 +46,7 @@ class BangumiSyncManager @Inject constructor(
     private val credentialStore: CredentialStore,
     private val userCollectionDao: UserCollectionDao,
     private val workDao: WorkDao,
+    private val workTagWriter: WorkTagWriter,
     private val backlogRepository: com.acgcompass.domain.repository.BacklogRepository,
     private val settingsDataStore: SettingsDataStore,
     private val syncStatusRepository: SyncStatusRepository,
@@ -104,6 +107,8 @@ class BangumiSyncManager @Inject constructor(
         val batch = mutableListOf<UserCollectionEntity>()
         // H4 反向同步：Bangumi「想看/在看」收藏 → 待补池（看过/搁置/抛弃不进）。
         val backlogWorks = mutableListOf<com.acgcompass.domain.model.Work>()
+        // P2-5/P2-6：收集同步到的作品（含社区标签），循环后统一写入 tags+work_tags，供候选池/今晚看什么/题材筛选使用。
+        val syncedWorks = mutableListOf<com.acgcompass.domain.model.Work>()
 
         while (pages < MAX_PAGES) {
             when (val page = bangumi.getUserCollections(username = username, limit = PAGE_SIZE, offset = offset)) {
@@ -123,13 +128,19 @@ class BangumiSyncManager @Inject constructor(
                             skipped += 1
                             continue
                         }
+                        // H4 反向同步去重（吃灰一致性）：仅在「新出现的想看/在看」时种入待补池——首次同步到该
+                        // 收藏，或其在 Bangumi 上刚从别的状态转为想看/在看。已是想看/在看的重复同步不再回灌，
+                        // 避免用户已从待补池/吃灰馆删除的条目被同步「复活」回原状态。
+                        val existing = userCollectionDao.getByWork(entity.localWorkId)
+                        val nowWishOrWatching = entity.status == "想看" || entity.status == "在看"
+                        val wasWishOrWatching = existing?.status == "想看" || existing?.status == "在看"
                         // 写入对应 Work（详情页/统计可读）；保留既有 createdAt。
                         dto.subject?.toWork()?.let { work ->
                             val existingWork = workDao.getById(work.id)
                             workDao.upsert(work.toEntity(createdAt = existingWork?.createdAt ?: now, updatedAt = now))
-                            if (entity.status == "想看" || entity.status == "在看") backlogWorks += work
+                            syncedWorks += work
+                            if (nowWishOrWatching && !wasWishOrWatching) backlogWorks += work
                         }
-                        val existing = userCollectionDao.getByWork(entity.localWorkId)
                         if (existing == null) added += 1 else updated += 1
                         batch += entity
                     }
@@ -141,6 +152,8 @@ class BangumiSyncManager @Inject constructor(
         }
 
         if (batch.isNotEmpty()) userCollectionDao.upsertAll(batch)
+        // P2-5/P2-6：持久化同步作品的社区标签（tags+work_tags），使候选池/今晚看什么/题材筛选能用真实 tag；失败不影响同步。
+        runCatching { workTagWriter.persist(syncedWorks.distinctBy { it.id }) }
         // H4：把想看/在看作品并入待补池（addAll 去重幂等）；失败不影响同步结果。
         if (backlogWorks.isNotEmpty()) {
             runCatching { backlogRepository.addAll(backlogWorks.distinctBy { it.id }) }
@@ -158,7 +171,7 @@ class BangumiSyncManager @Inject constructor(
         val contentTags = dto.subject?.tags.orEmpty()
             .sortedByDescending { it.count }
             .map { cleanTag(it.name) }
-            .filter { it.length >= 2 && !isNoiseTag(it) }
+            .filter { it.length >= 2 && !TasteTagTaxonomy.isMeta(it) }
             .distinct()
             .take(12)
         return UserCollectionEntity(
@@ -181,34 +194,9 @@ class BangumiSyncManager @Inject constructor(
     private fun cleanTag(raw: String): String =
         raw.replace('_', ' ').replace('-', ' ').trim().replace(Regex("\\s+"), " ")
 
-    /**
-     * P0-2：是否为「非内容」噪声标签——年份/季度（如 2024、2024年10月）、媒介格式（TV/OVA/剧场版）、
-     * 改编来源（漫画改/轻小说改/原创）、地区（日本）等。这些是元数据而非题材/情绪信号，
-     * 计入口味画像会让「每部都有的标签」霸榜，污染高/低分倾向，故剔除。
-     */
-    private fun isNoiseTag(tag: String): Boolean {
-        val t = tag.trim()
-        if (t.isEmpty()) return true
-        if (NOISE_DATE_REGEX.matches(t)) return true
-        return t.lowercase() in NOISE_TAGS
-    }
-
     private companion object {
         const val PAGE_SIZE = 50
         const val MAX_PAGES = 40
-
-        /** P0-2：年份/季度型噪声标签正则（如 2024、2024年、2024年10月、2024-10、10月）。 */
-        val NOISE_DATE_REGEX = Regex(
-            "^(\\d{4}|\\d{4}\u5e74|\\d{4}\u5e74\\d{1,2}\u6708|\\d{4}[-./]\\d{1,2}|\\d{1,2}\u6708)$",
-        )
-
-        /** P0-2：媒介格式/改编来源/地区等非内容噪声标签（小写比较）。 */
-        val NOISE_TAGS: Set<String> = setOf(
-            "tv", "ova", "oad", "ona", "web", "sp", "pv", "cm", "mv", "op", "ed",
-            "\u5267场版", "\u5267场", "\u7535影", "\u77ed片", "\u7279别篇", "\u52a8画", "\u65e5本\u52a8画", "tv\u52a8画", "\u52a8画\u5316",
-            "\u6f2b画改", "\u8f7b小说改", "\u5c0f说改", "\u6e38戏改", "gal\u6539", "galgame\u6539", "eroge\u6539", "\u539f创", "\u6f2b改",
-            "\u6539编", "18\u7981\u6e38戏\u6539", "\u624b游改", "\u65e5本", "\u56fd产", "\u4e2d国", "\u7f8e国",
-        )
 
         /** Bangumi 收藏 type：1 想看 / 2 看过 / 3 在看 / 4 搁置 / 5 抛弃。 */
         fun mapStatus(type: Int?): String? = when (type) {

@@ -129,6 +129,8 @@ class SettingsViewModel @Inject constructor(
                         allowAiAnalyzeReviews = settings.allowAiAnalyzeReviews,
                         recordTimeMachineSnapshots = settings.recordTimeMachineSnapshots,
                         autoSyncIntervalMinutes = settings.autoSyncIntervalMinutes,
+                        recommendMinCommunityScore = settings.recommendMinCommunityScore,
+                        tasteMatchThreshold = settings.tasteMatchThreshold,
                     ),
                     saveNoticeVisible = notice,
                     bangumiApi = buildBangumiApiState(settings, local),
@@ -435,6 +437,16 @@ class SettingsViewModel @Inject constructor(
     /** H7：设置自动同步间隔（分钟，0=关闭）。写入后由 Application 观察并即时重新调度。 */
     fun onSetAutoSyncInterval(minutes: Int) {
         viewModelScope.launch { settingsDataStore.setAutoSyncIntervalMinutes(minutes) }
+    }
+
+    /** Phase④：设置推荐社区均分下限（0~10，0=不限）。 */
+    fun onSetRecommendMinScore(score: Float) {
+        viewModelScope.launch { settingsDataStore.setRecommendMinCommunityScore(score) }
+    }
+
+    /** Phase④：设置口味匹配度阈值（0~1，0=关闭）。低于此匹配度的作品不进入推荐。 */
+    fun onSetTasteMatchThreshold(threshold: Float) {
+        viewModelScope.launch { settingsDataStore.setTasteMatchThreshold(threshold) }
     }
 
     // endregion

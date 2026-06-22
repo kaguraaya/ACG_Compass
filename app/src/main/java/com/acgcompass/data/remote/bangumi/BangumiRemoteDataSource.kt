@@ -16,6 +16,16 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
+ * P2-2：Bangumi 真实排行榜分页结果。[items] 该页（[WorkMatch] + 评分，按 rank 升序）；
+ * [total] 为过滤后总条目数（Bangumi 分页响应 `total`），供上层据此判断是否还有下一页，
+ * 避免「某页返回数 < limit 即误判到底」。
+ */
+data class BangumiRankedPage(
+    val items: List<Pair<WorkMatch, RatingEntry?>>,
+    val total: Int,
+)
+
+/**
  * Bangumi 远程数据源（P0 主源，RC.01 3.1/3.2/3.7）。
  *
  * 职责：调用 [BangumiApi] → 检视 HTTP 状态 → 经 [HttpErrorMapper] 映射错误 → DTO 转领域模型，
@@ -90,7 +100,7 @@ class BangumiRemoteDataSource @Inject constructor(
         airDate: List<String>? = null,
         limit: Int = 30,
         offset: Int = 0,
-    ): AppResult<List<Pair<WorkMatch, RatingEntry?>>> = runCatchingApp {
+    ): AppResult<BangumiRankedPage> = runCatchingApp {
         val filter = BangumiSearchFilterDto(
             type = listOf(BangumiSubjectType.ANIME),
             airDate = airDate,
@@ -105,9 +115,11 @@ class BangumiRemoteDataSource @Inject constructor(
         )
         val paged = api.searchSubjects(request, limit, offset, auth).bodyOrThrow()
         // N5：按真实 rank 升序（排名越小越靠前）客户端兜底排序，nulls/0 视为最差。
-        paged.data
+        val items = paged.data
             .sortedBy { it.rating?.rank?.takeIf { r -> r > 0 } ?: Int.MAX_VALUE }
             .map { it.toWorkMatch() to it.rating.toRatingEntry() }
+        // P2-2：携带过滤后总数，供分页判定是否还有更多（不依赖返回数 >= limit）。
+        BangumiRankedPage(items = items, total = paged.total)
     }
 
     /** 条目关联人物。 */

@@ -4,6 +4,7 @@ import com.acgcompass.core.common.AppResult
 import com.acgcompass.core.common.DispatcherProvider
 import com.acgcompass.core.common.runCatchingApp
 import com.acgcompass.data.local.dao.TasteDao
+import com.acgcompass.data.local.dao.UserCollectionDao
 import com.acgcompass.data.local.entity.TasteProfileEntity
 import com.acgcompass.data.local.entity.TasteTagStatEntity
 import com.acgcompass.domain.model.TagBucket
@@ -45,6 +46,7 @@ import javax.inject.Singleton
 @Singleton
 class TasteProfileRepositoryImpl @Inject constructor(
     private val tasteDao: TasteDao,
+    private val userCollectionDao: UserCollectionDao,
     private val calculator: TasteStatsCalculator,
     private val habitCalculator: ScoringHabitCalculator,
     private val dispatchers: DispatcherProvider,
@@ -69,39 +71,61 @@ class TasteProfileRepositoryImpl @Inject constructor(
     override suspend fun importAndCompute(
         records: List<TasteInputRecord>,
     ): AppResult<TasteProfile> = withContext(dispatchers.io) {
-        runCatchingApp {
-            val stats = calculator(records)
-            val habit = habitCalculator(records, stats)
-            val profileId = UUID.randomUUID().toString()
-            val now = System.currentTimeMillis()
+        runCatchingApp { computeAndPersist(records) }
+    }
 
-            val profileEntity = TasteProfileEntity(
-                id = profileId,
-                // 评分习惯（task 25.2）：由用户评分推导，无评分样本时为中性 / 缺失，不伪造（RC.10.07）。
-                strictness = habit.strictness,
-                avgScore = habit.avgScore,
-                highScoreRarity = habit.highScoreRarity,
-                commonScoreBand = habit.commonScoreBand,
-                titles = habit.titles,
-                confidence = confidenceFor(stats.sampleSize),
-                generatedAt = now,
-            )
-            val tagStatRows = stats.toTagStatRows(profileId)
+    // --- recomputeFromLocal（打分/评价后自动刷新，B-1） -----------------------
 
-            // P1-3：口味画像只需保留最新一份（observeLatestProfile 取最新）。先快照写入前的旧画像，
-            // 写入本次画像后再删除旧画像及其标签行，避免自动重算导致 taste_profiles 持续膨胀。
-            val staleProfiles = tasteDao.getAllProfiles()
-            // 覆盖式写入：先清掉（本次 id 的）旧标签行再 upsert，保证读回的画像与本次统计一致。
-            tasteDao.upsertProfile(profileEntity)
-            tasteDao.deleteTagStatsForProfile(profileId)
-            tasteDao.upsertTagStats(tagStatRows)
-            staleProfiles.asSequence().filter { it.id != profileId }.forEach { old ->
-                tasteDao.deleteTagStatsForProfile(old.id)
-                tasteDao.deleteProfile(old)
+    override suspend fun recomputeFromLocal(): AppResult<TasteProfile?> =
+        withContext(dispatchers.io) {
+            runCatchingApp {
+                val records = userCollectionDao.getAll().map { c ->
+                    TasteInputRecord(
+                        rating = c.rating,
+                        tags = c.tags,
+                        reviewText = c.comment,
+                        status = c.status,
+                        updatedAt = c.updatedAt,
+                    )
+                }
+                // 无任何本地收藏 / 评分：不生成画像（不伪造），返回 null。
+                if (records.isEmpty()) null else computeAndPersist(records)
             }
-
-            profileEntity.toDomain(tagStatRows)
         }
+
+    /** 计算统计 + 覆盖式落库（仅留最新一份画像），返回新画像。供 import 与本地重算复用。 */
+    private suspend fun computeAndPersist(records: List<TasteInputRecord>): TasteProfile {
+        val stats = calculator(records)
+        val habit = habitCalculator(records, stats)
+        val profileId = UUID.randomUUID().toString()
+        val now = System.currentTimeMillis()
+
+        val profileEntity = TasteProfileEntity(
+            id = profileId,
+            // 评分习惯（task 25.2）：由用户评分推导，无评分样本时为中性 / 缺失，不伪造（RC.10.07）。
+            strictness = habit.strictness,
+            avgScore = habit.avgScore,
+            highScoreRarity = habit.highScoreRarity,
+            commonScoreBand = habit.commonScoreBand,
+            titles = habit.titles,
+            confidence = confidenceFor(stats.sampleSize),
+            generatedAt = now,
+        )
+        val tagStatRows = stats.toTagStatRows(profileId)
+
+        // P1-3：口味画像只需保留最新一份（observeLatestProfile 取最新）。先快照写入前的旧画像，
+        // 写入本次画像后再删除旧画像及其标签行，避免自动重算导致 taste_profiles 持续膨胀。
+        val staleProfiles = tasteDao.getAllProfiles()
+        // 覆盖式写入：先清掉（本次 id 的）旧标签行再 upsert，保证读回的画像与本次统计一致。
+        tasteDao.upsertProfile(profileEntity)
+        tasteDao.deleteTagStatsForProfile(profileId)
+        tasteDao.upsertTagStats(tagStatRows)
+        staleProfiles.asSequence().filter { it.id != profileId }.forEach { old ->
+            tasteDao.deleteTagStatsForProfile(old.id)
+            tasteDao.deleteProfile(old)
+        }
+
+        return profileEntity.toDomain(tagStatRows)
     }
 
     // --- mapping -----------------------------------------------------------

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108" role="img" aria-label="ACG Compass app icon">
+  <!-- Reconstructed from the app's adaptive launcher icon (ic_launcher_foreground.xml + ic_launcher_background). -->
+  <rect width="108" height="108" rx="24" fill="#1F2A44"/>
+  <circle cx="54" cy="54" r="24" fill="none" stroke="#7FB3FF" stroke-width="4"/>
+  <path d="M54 30 L62 54 L54 78 L46 54 Z" fill="#FFFFFF"/>
+</svg>

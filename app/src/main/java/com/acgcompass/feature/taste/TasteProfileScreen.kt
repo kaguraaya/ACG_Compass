@@ -17,9 +17,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -28,6 +26,8 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.acgcompass.core.designsystem.AcgCompassTheme
+import com.acgcompass.core.ui.AcgScreenScaffold
+import com.acgcompass.core.ui.ScreenContentPadding
 import com.acgcompass.core.ui.StateScaffold
 import com.acgcompass.core.ui.UiState
 import com.acgcompass.domain.model.TagBucket
@@ -72,25 +72,20 @@ fun TasteProfileScreen(
     importing: Boolean = false,
     onImportData: () -> Unit = {},
 ) {
-    Scaffold(
-        modifier = modifier.fillMaxSize(),
-        topBar = {
-            TopAppBar(
-                title = { Text("口味画像") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                    }
-                },
-                // N11/Q11：默认 windowInsets（含状态栏）+ Scaffold 默认 inset 处理，避免首个卡片被遮挡。
-            )
+    AcgScreenScaffold(
+        title = "口味画像",
+        modifier = modifier,
+        navigationIcon = {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+            }
         },
     ) { innerPadding ->
         StateScaffold(
             state = state,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
+                .padding(top = innerPadding.calculateTopPadding()),
             // R30：空态 CTA 不再是死按钮——前往设置（Bangumi/同步）导入口味数据。
             onCta = { onImportData() },
         ) { profile ->
@@ -98,9 +93,13 @@ fun TasteProfileScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
-                    .padding(16.dp)
-                    // F1：标题栏下方额外 8dp 呼吸（共约 24dp），底部额外留白避免末项贴边。
-                    .padding(top = 8.dp, bottom = 8.dp),
+                    // F1 inset 模型：统一 AcgScreenScaffold + ScreenContentPadding，避免首个卡片被标题栏遮挡。
+                    .padding(
+                        start = ScreenContentPadding.Horizontal,
+                        end = ScreenContentPadding.Horizontal,
+                        top = ScreenContentPadding.Top,
+                        bottom = ScreenContentPadding.Bottom,
+                    ),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 val lowSample = profile.confidence < 0.3f

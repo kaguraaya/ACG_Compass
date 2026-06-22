@@ -4,6 +4,7 @@ import com.acgcompass.domain.model.MediaType
 import com.acgcompass.domain.model.SourceId
 import com.acgcompass.domain.model.Titles
 import com.acgcompass.domain.model.Work
+import com.acgcompass.domain.model.WorkMatch
 import io.kotest.core.spec.style.StringSpec
 import io.kotest.matchers.shouldBe
 
@@ -53,5 +54,39 @@ class CrossSourceMergeTest : StringSpec({
         val umbrella = work("7", "9 nine")
         val entry = work("8", "9-nine-九次九日九重色", ja = "9-nine-九次九日九重色")
         sameWork(umbrella, entry) shouldBe false
+    }
+
+    // --- P0-1：选代表综合得分（相似度 + 评分人数对数加成，上限 POPULARITY_BOOST_MAX）---
+
+    fun match(
+        id: String,
+        confidence: Float,
+        popularity: Int,
+        source: SourceId = SourceId.BANGUMI,
+    ): WorkMatch = WorkMatch(
+        work = work(id = id, canonical = id, source = source),
+        matchConfidence = confidence,
+        sourceTag = source,
+        popularity = popularity,
+    )
+
+    "正片（评分人数远多）应凭综合得分胜过仅相似度微高的续作/小条目（P0-1）" {
+        // 正片 27330 人 vs 第二季 11 人，后者相似度略高也不应顶替。
+        val main = match("main", confidence = 0.93f, popularity = 27330)
+        val sequel = match("sequel", confidence = 0.96f, popularity = 11)
+        representativeOf(listOf(sequel, main)).work.id shouldBe "main"
+    }
+
+    "高热但相似度很低的不相关条目不应顶替相关正片（人数加成有上限，P0-1）" {
+        val related = match("related", confidence = 0.93f, popularity = 100)
+        val unrelatedHot = match("hot", confidence = 0.5f, popularity = 200_000)
+        representativeOf(listOf(unrelatedHot, related)).work.id shouldBe "related"
+    }
+
+    "评分人数加成不超过上限 POPULARITY_BOOST_MAX，且人数为 0 时无加成（P0-1）" {
+        val boosted = representativeScore(0.5, 1_000_000)
+        (boosted <= 0.5 + POPULARITY_BOOST_MAX + 1e-9) shouldBe true
+        (boosted >= 0.5 + POPULARITY_BOOST_MAX - 1e-6) shouldBe true
+        representativeScore(0.8, 0) shouldBe 0.8
     }
 })

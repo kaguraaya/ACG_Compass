@@ -34,6 +34,25 @@ import com.acgcompass.core.designsystem.WorkCardUiModel
 import com.acgcompass.core.ui.StateScaffold
 import com.acgcompass.core.ui.UiState
 
+/** P2-8：推荐器路由参数键——首页「今日状态」预填的「想看标签」（逗号分隔）。 */
+const val RECOMMENDER_ARG_TAGS: String = "presetTags"
+
+/** P2-8：推荐器路由模板（含可选预填标签参数；无参时进入默认推荐器）。 */
+const val RECOMMENDER_ROUTE_PATTERN: String = "recommender?$RECOMMENDER_ARG_TAGS={$RECOMMENDER_ARG_TAGS}"
+
+/**
+ * P2-8：构造跳转「今晚看什么」推荐器的路由。
+ *
+ * [presetTags] 为首页今日状态映射的「想看标签」，会预填进推荐器的标签筛选；为空时进入无预填的默认推荐器。
+ * 标签可能含中文，故对拼接串做 URL 编码（读取侧由 Navigation 自动解码）。
+ */
+fun recommenderRoute(presetTags: List<String> = emptyList()): String =
+    if (presetTags.isEmpty()) {
+        "recommender"
+    } else {
+        "recommender?$RECOMMENDER_ARG_TAGS=" + android.net.Uri.encode(presetTags.joinToString(","))
+    }
+
 /**
  * 推荐器路由入口（RC.11 / Requirements 13.1–13.4, 13.8）。连接 [RecommenderViewModel] 并把
  * 状态与回调下发给无状态的 [RecommenderScreen]。
@@ -48,12 +67,14 @@ fun RecommenderRoute(
 ) {
     val input by viewModel.input.collectAsStateWithLifecycle()
     val result by viewModel.result.collectAsStateWithLifecycle()
+    val availableTags by viewModel.availableTags.collectAsStateWithLifecycle()
 
     RecommenderScreen(
         input = input,
         result = result,
+        availableTags = availableTags,
         onSelectTime = viewModel::onSelectTime,
-        onToggleMood = viewModel::onToggleMood,
+        onToggleTag = viewModel::onToggleTag,
         onToggleAcceptance = viewModel::onToggleAcceptance,
         onToggleIndecision = viewModel::onToggleIndecisionMode,
         onToggleFinalsProtection = viewModel::onToggleFinalsProtection,
@@ -74,8 +95,9 @@ fun RecommenderRoute(
 fun RecommenderScreen(
     input: RecommenderInput,
     result: UiState<List<RecommendationUiModel>>,
+    availableTags: List<String>,
     onSelectTime: (TimeBudget) -> Unit,
-    onToggleMood: (MoodOption) -> Unit,
+    onToggleTag: (String) -> Unit,
     onToggleAcceptance: (AcceptanceOption) -> Unit,
     onToggleIndecision: () -> Unit,
     onToggleFinalsProtection: () -> Unit,
@@ -119,8 +141,9 @@ fun RecommenderScreen(
 
             InputSection(
                 input = input,
+                availableTags = availableTags,
                 onSelectTime = onSelectTime,
-                onToggleMood = onToggleMood,
+                onToggleTag = onToggleTag,
                 onToggleAcceptance = onToggleAcceptance,
             )
 
@@ -208,8 +231,9 @@ private fun ModeSwitchRow(
 @Composable
 private fun InputSection(
     input: RecommenderInput,
+    availableTags: List<String>,
     onSelectTime: (TimeBudget) -> Unit,
-    onToggleMood: (MoodOption) -> Unit,
+    onToggleTag: (String) -> Unit,
     onToggleAcceptance: (AcceptanceOption) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -225,15 +249,25 @@ private fun InputSection(
             }
         }
 
-        // 心情（多选，RC.11.02）。
-        Text("现在的心情", style = MaterialTheme.typography.titleMedium)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            MoodOption.entries.forEach { option ->
-                FilterChip(
-                    selected = option in input.moods,
-                    onClick = { onToggleMood(option) },
-                    label = { Text(option.label()) },
-                )
+        // P2-5：标签（多选，RC.11.02）——来自候选池作品的真实 Bangumi 社区标签，动态生成。
+        // P2-8：并入预填标签（来自首页今日状态），即使不在候选池高频标签内也展示并高亮，避免「已选却看不到」。
+        Text("想看的标签", style = MaterialTheme.typography.titleMedium)
+        val displayTags = (availableTags + input.selectedTags.toList()).distinct()
+        if (displayTags.isEmpty()) {
+            Text(
+                text = "暂无可用标签，先补充待补池或切换上方「全部作品」",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                displayTags.forEach { tag ->
+                    FilterChip(
+                        selected = tag in input.selectedTags,
+                        onClick = { onToggleTag(tag) },
+                        label = { Text(tag) },
+                    )
+                }
             }
         }
 
@@ -315,10 +349,11 @@ private fun RecommendationCard(
 private fun RecommenderScreenInitialPreview() {
     AcgCompassTheme {
         RecommenderScreen(
-            input = RecommenderInput(time = TimeBudget.TWO_THREE_HOURS, moods = setOf(MoodOption.RELAXED)),
+            input = RecommenderInput(time = TimeBudget.TWO_THREE_HOURS, selectedTags = setOf("治愈")),
             result = UiState.Empty(com.acgcompass.core.ui.Cta("选择条件后生成推荐", "submit")),
+            availableTags = listOf("治愈", "日常", "搞笑", "热血", "悬疑", "科幻"),
             onSelectTime = {},
-            onToggleMood = {},
+            onToggleTag = {},
             onToggleAcceptance = {},
             onToggleIndecision = {},
             onToggleFinalsProtection = {},
@@ -354,8 +389,9 @@ private fun RecommenderScreenResultPreview() {
         RecommenderScreen(
             input = RecommenderInput(time = TimeBudget.TWO_THREE_HOURS),
             result = UiState.Success(sample),
+            availableTags = listOf("治愈", "日常", "搞笑"),
             onSelectTime = {},
-            onToggleMood = {},
+            onToggleTag = {},
             onToggleAcceptance = {},
             onToggleIndecision = {},
             onToggleFinalsProtection = {},

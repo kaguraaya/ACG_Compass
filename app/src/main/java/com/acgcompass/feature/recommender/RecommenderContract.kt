@@ -12,7 +12,7 @@ import com.acgcompass.domain.repository.DrawCriteria
  * 「今晚看什么」推荐器 UI 契约（RC.11.01/02/03/04/08 / Requirements 13.1–13.4, 13.8）。
  *
  * 本文件集中三类纯数据 / 纯函数：
- * 1. 三组输入选项（时间 / 心情 / 接受程度）的枚举与可读标签（RC.11.01/02/03）。
+ * 1. 三组输入选项（时间 / 标签 / 接受程度）：时间/接受程度为固定枚举；标签为动态真实 Bangumi 社区标签（P2-5，RC.11.01/02/03）。
  * 2. 三推荐（稳妥 / 赌一把 / 神经病）的种类与展示模型（RC.11.04）。
  * 3. 输入 → [DrawCriteria] 的映射（纯函数，便于单元测试）。底层抽取与硬过滤由
  *    `BacklogRepository.draw` 执行，保证「不推荐已完成、且满足全部硬性过滤」（RC.11.08 / Property 14）。
@@ -49,34 +49,6 @@ enum class TimeBudget(val availableMinutes: Int?) {
         TWO_THREE_HOURS -> "2-3 小时"
         WEEKEND -> "周末通宵"
     }
-}
-
-/**
- * 心情选择（RC.11.02）：轻松 / 胃疼 / 热血 / 恋爱 / 悬疑 / 神作补课 / 短篇 / 电波 / 想被震撼。
- *
- * [tag] 即与待补条目 [BacklogItem.moodTags] 比对的心情标签字符串（命中其一即可，RC.11 软偏好）。
- */
-enum class MoodOption(val tag: String) {
-    RELAXED("轻松"),
-    HEALING("治愈"),
-    FUNNY("搞笑"),
-    TEARJERKER("催泪"),
-    STOMACH_ACHE("胃疼"),
-    HOT_BLOODED("热血"),
-    ROMANCE("恋爱"),
-    DAILY("日常"),
-    SUSPENSE("悬疑"),
-    SCIFI("科幻"),
-    FANTASY("奇幻"),
-    MUSIC("音乐"),
-    SPORTS("运动"),
-    MASTERPIECE("神作补课"),
-    SHORT("短篇"),
-    WAVELENGTH("电波"),
-    SHOCKED("想被震撼"),
-    ;
-
-    fun label(): String = tag
 }
 
 /**
@@ -150,7 +122,7 @@ enum class RecommendationKind {
     fun tagline(): String = when (this) {
         SAFE -> "严格贴合你的选择，几乎不会踩雷"
         GAMBLE -> "放宽一点风险，也许有惊喜"
-        WILDCARD -> "抛开心情限制，来点意料之外"
+        WILDCARD -> "抛开标签限制，来点意料之外"
     }
 }
 
@@ -173,14 +145,14 @@ data class RecommendationUiModel(
  * 推荐器输入状态（RC.11.01/02/03）。
  *
  * @property time 时间预算；`null` 表示尚未选择（提交前提示选择）。
- * @property moods 已选心情集合（可多选，命中其一即可）。
+ * @property selectedTags 已选标签集合（P2-5：来自候选池作品的真实 Bangumi 社区标签，可多选，命中其一即可）。
  * @property acceptances 已选接受程度集合（可多选）。
  *
  * 注：26.2 的模式开关（不准纠结 / 期末周保护 / 深夜提醒）将作为独立字段加入本状态，当前未建模。
  */
 data class RecommenderInput(
     val time: TimeBudget? = null,
-    val moods: Set<MoodOption> = emptySet(),
+    val selectedTags: Set<String> = emptySet(),
     val acceptances: Set<AcceptanceOption> = emptySet(),
     /** 不准纠结模式（RC.11.05）：仅给一个推荐 + 明确理由，替你做决定。 */
     val indecisionMode: Boolean = false,
@@ -191,7 +163,7 @@ data class RecommenderInput(
     /** I9（RC.40）：候选池——待补池（默认）或全部作品。 */
     val candidatePool: CandidatePool = CandidatePool.BACKLOG,
 ) {
-    /** 是否可提交：至少选择了时间（心情 / 接受程度可空，空即不施加该维度约束）。 */
+    /** 是否可提交：至少选择了时间（标签 / 接受程度可空，空即不施加该维度约束）。 */
     val canSubmit: Boolean get() = time != null
 }
 
@@ -247,10 +219,10 @@ fun RecommenderInput.toDrawCriteria(
         riskTolerance = riskTolerance - FINALS_FILTERED_RISK_TAGS
     }
 
-    // 神经病忽略心情（软偏好）以制造意外感；稳妥 / 赌一把保留心情命中。
+    // 神经病忽略标签（软偏好）以制造意外感；稳妥 / 赌一把保留标签命中。
     val moodTags: Set<String> = when (kind) {
         RecommendationKind.WILDCARD -> emptySet()
-        else -> moods.map { it.tag }.toSet()
+        else -> selectedTags
     }
 
     return DrawCriteria(

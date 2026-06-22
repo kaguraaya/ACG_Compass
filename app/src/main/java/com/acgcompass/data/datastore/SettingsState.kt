@@ -59,6 +59,10 @@ data class SettingsState(
     val bangumiNonOfficialTokenConsent: Boolean = false,
     /** H7：自动同步间隔（分钟）。0 = 关闭自动同步；最小有效间隔由调度层钳制到 WorkManager 下限。 */
     val autoSyncIntervalMinutes: Int = DEFAULT_AUTO_SYNC_INTERVAL_MINUTES,
+    /** Phase④：推荐过滤的社区均分下限（0~10）。低于此分的作品不进入「今晚看什么」推荐；0 = 不限。 */
+    val recommendMinCommunityScore: Float = DEFAULT_RECOMMEND_MIN_COMMUNITY_SCORE,
+    /** Phase④：口味匹配度阈值（0~1）。低于此匹配度的作品不进入推荐（相当于自动重 roll）；0 = 关闭该过滤。 */
+    val tasteMatchThreshold: Float = DEFAULT_TASTE_MATCH_THRESHOLD,
 ) {
     /** 当前 Bangumi API 是否为官方地址。 */
     val isBangumiOfficialApi: Boolean
@@ -82,5 +86,11 @@ data class SettingsState(
 
         /** H7：默认关闭自动同步（0 分钟）。 */
         const val DEFAULT_AUTO_SYNC_INTERVAL_MINUTES = 0
+
+        /** Phase④：默认推荐社区均分下限 6.0（沿用此前推荐器的默认下限）。 */
+        const val DEFAULT_RECOMMEND_MIN_COMMUNITY_SCORE = 6.0f
+
+        /** Phase④：默认口味匹配度阈值 0（关闭，行为与旧版一致；用户可上调以过滤低匹配作品）。 */
+        const val DEFAULT_TASTE_MATCH_THRESHOLD = 0.0f
     }
 }

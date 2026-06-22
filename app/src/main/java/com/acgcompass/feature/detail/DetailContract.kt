@@ -16,6 +16,8 @@ import com.acgcompass.domain.model.TasteProfile
 import com.acgcompass.domain.model.Units
 import com.acgcompass.domain.model.Work
 import com.acgcompass.domain.usecase.AggregateRatingsUseCase
+import com.acgcompass.domain.usecase.PersonalTasteScorer
+import com.acgcompass.domain.usecase.TasteScore
 import kotlin.math.roundToInt
 
 /**
@@ -760,136 +762,55 @@ private fun SpoilerRadarResult?.toRadarSummary(): String {
     }
 }
 
+/** 文件级单例：个性化口味评分器（无状态、纯函数）。详情页与「今晚看什么」推荐共用同一打分口径。 */
+private val personalTasteScorer = PersonalTasteScorer()
+
 /**
- * 口味匹配度（RC.07.05 / RC.10.03）：以作品标签与口味画像高分标签的重合度近似匹配度。
- * 无画像 / 无标签时返回 [TasteMatchUiModel.Unavailable]（不伪造，措辞用「可能 / 倾向于」）。
+ * 口味匹配度（RC.07.05 / RC.10.03）：委托共享 [PersonalTasteScorer]，与推荐器同一口径。
+ * 以作品标签与口味画像高/低分标签的**加权重合**为主导（题材标签全权重、年份/厂商等元数据弱化），
+ * 社区评分仅作轻量先验（较此前再降权）。无画像 / 数据不足时返回 [TasteMatchUiModel.Unavailable]（不伪造）。
  */
 private fun Work.toTasteMatch(tasteProfile: TasteProfile?, ratings: RatingAggregate? = null): TasteMatchUiModel {
-    if (tasteProfile == null) {
-        return TasteMatchUiModel.Unavailable("尚未生成口味画像，先在「我的 → 口味画像」从 Bangumi 同步生成")
-    }
-    val workTagNames = tags.map { it.name.lowercase() }.toSet()
-    val highScoreTags = tasteProfile.tagStats
-        .filter { it.bucket == com.acgcompass.domain.model.TagBucket.HIGH_SCORE }
-        .map { it.tagName.lowercase() }
-        .toSet()
-    val lowScoreTags = tasteProfile.tagStats
-        .filter { it.bucket == com.acgcompass.domain.model.TagBucket.LOW_SCORE }
-        .map { it.tagName.lowercase() }
-        .toSet()
-
-    // R92：作品无标签时，混合「本地规则」用社区评分 + 类型 + 你的评分习惯做低置信估计，
-    // 而不是直接「无法计算」。仅当连标签和社区评分都没有时才返回数据不足。
-    if (workTagNames.isEmpty() || (highScoreTags.isEmpty() && lowScoreTags.isEmpty())) {
-        return estimateTasteMatchWithoutTags(tasteProfile, ratings)
-    }
-
-    val highHits = workTagNames.count { it in highScoreTags }
-    val lowHits = workTagNames.count { it in lowScoreTags }
-    // Q16：多维口味匹配模型——更大区分度、不再都聚在 50-70。
-    // 维度 1 题材契合（长期口味·主导）：作品中「你高分常见标签」的覆盖率（强力拉升），命中低分标签下压。
-    val effectiveTags = minOf(workTagNames.size, 6).coerceAtLeast(1)
-    val coverage = (highHits.toFloat() / effectiveTags).coerceIn(0f, 1f)
-    val negRatio = (lowHits.toFloat() / effectiveTags).coerceIn(0f, 1f)
-    var genre = 0.4f + coverage * 0.6f - negRatio * 0.55f
-    genre = genre.coerceIn(0.05f, 0.98f)
-
-    // 维度 2 社会证明：社区评分（0~10→0~1）——P0-3：仅作辅助，低权重（用户诉求：平台评分权重不要太高）。
     val community10 = ratings.representativeScore10()
-    val communityNorm = community10?.let { (it / 10f).coerceIn(0f, 1f) }
-
-    // 维度 3 评分习惯（长期口味）：相对你的平均分越高越对味（你给高分的作品类型）。
-    val userAvg = tasteProfile.avgScore.takeIf { it > 0f }
-    val habitAdj = if (community10 != null && userAvg != null) {
-        ((community10 - userAvg) / 10f).coerceIn(-0.15f, 0.15f)
-    } else {
-        0f
+    val score = personalTasteScorer.score(this, tasteProfile, community10)
+    when (score.basis) {
+        TasteScore.Basis.NO_PROFILE ->
+            return TasteMatchUiModel.Unavailable("尚未生成口味画像，先在「我的 → 口味画像」从 Bangumi 同步生成")
+        TasteScore.Basis.INSUFFICIENT ->
+            return TasteMatchUiModel.Unavailable(
+                "该作品暂无标签与社区评分，数据不足，无法计算口味匹配度（口味画像已生成）",
+            )
+        else -> Unit
     }
 
-    // P0-3 综合：长期口味为主（题材 0.75 + 评分习惯 0.1 = 0.85），平台评分仅辅助（0.15）。无社区评分时题材占 0.9。
-    var fraction = if (communityNorm != null) {
-        (genre * 0.75f + communityNorm * 0.15f + (0.5f + habitAdj) * 0.1f).coerceIn(0.05f, 0.98f)
-    } else {
-        (genre * 0.9f + 0.05f).coerceIn(0.05f, 0.98f)
-    }
-
-    // P0-3 低置信处理：口味画像样本不足（confidence < 0.3）时，把匹配度向中性 0.5 收缩，避免低样本给出
-    // 过度自信的高/低分；并在定性与理由中明确告知置信度低（用户诉求：数据不足时明确告知）。
-    val profileConfidence = tasteProfile.confidence.coerceIn(0f, 1f)
-    val lowConfidence = profileConfidence < 0.3f
-    if (lowConfidence) {
-        fraction = (0.5f + (fraction - 0.5f) * 0.6f).coerceIn(0.05f, 0.98f)
-    }
-
-    val matchedHighTags = tags.map { it.name }.filter { it.lowercase() in highScoreTags }
-    val matchedLowTags = tags.map { it.name }.filter { it.lowercase() in lowScoreTags }
+    val fraction = score.fraction
     val qualitative = when {
         fraction >= 0.7f -> "很可能合你的胃口"
         fraction >= 0.55f -> "可能会喜欢"
         fraction >= 0.4f -> "可能感觉一般"
         else -> "可能不太喜欢"
     }
-    // P0-3 可解释：优先用「命中的高/低分标签」说明（长期口味），社区评分仅作为辅助补充一句。
+    // 可解释：优先用「命中的高/低分标签」（长期口味）说明；无标签退化时用社区相对分补一句。
     val baseReason = when {
-        matchedHighTags.isNotEmpty() ->
-            "主要依据你的长期口味：命中你高分作品常见标签「${matchedHighTags.take(3).joinToString("、")}」" +
-                (if (matchedLowTags.isNotEmpty()) "，但也含低分标签「${matchedLowTags.take(2).joinToString("、")}」" else "")
-        matchedLowTags.isNotEmpty() ->
-            "含 ${matchedLowTags.size} 个你低分作品常见的标签「${matchedLowTags.take(3).joinToString("、")}」，可能不太合胃口（负信号已加权）"
-        community10 != null -> "与你的口味标签重合较少，参考社区评分 %.1f/10（仅辅助）".format(community10)
+        score.matchedHighTags.isNotEmpty() ->
+            "主要依据你的长期口味：命中你高分作品常见标签「${score.matchedHighTags.take(3).joinToString("、")}」" +
+                (if (score.matchedLowTags.isNotEmpty()) "，但也含低分标签「${score.matchedLowTags.take(2).joinToString("、")}」" else "")
+        score.matchedLowTags.isNotEmpty() ->
+            "含 ${score.matchedLowTags.size} 个你低分作品常见的标签「${score.matchedLowTags.take(3).joinToString("、")}」，可能不太合胃口（负信号已加权）"
+        score.basis == TasteScore.Basis.COMMUNITY_FALLBACK && community10 != null ->
+            "该作品暂无可匹配标签，参考社区评分 %.1f/10 相对你的口味粗估（仅辅助）".format(community10)
         else -> "与你的口味画像重合较少，仅供参考"
     }
-    val reason = if (lowConfidence) {
+    val reason = if (score.lowConfidence) {
         "$baseReason。注意：你的口味画像样本较少，置信度低，以上仅供参考"
     } else {
         baseReason
     }
     return TasteMatchUiModel.Available(
         percentText = "${(fraction * 100).roundToInt()}%",
-        qualitativeText = if (lowConfidence) "$qualitative（低置信）" else qualitative,
+        qualitativeText = if (score.lowConfidence) "$qualitative（低置信）" else qualitative,
         fraction = fraction,
         reason = reason,
-    )
-}
-
-/**
- * R92：无标签（或画像无标签统计）时的低置信口味估计。
- * 用社区评分相对你的平均分的高低 + 媒介类型做粗略估计；连社区评分都没有才判定数据不足。
- */
-private fun Work.estimateTasteMatchWithoutTags(
-    tasteProfile: TasteProfile,
-    ratings: RatingAggregate?,
-): TasteMatchUiModel {
-    val community = ratings.representativeScore10()
-    val userAvg = tasteProfile.avgScore.takeIf { it > 0f }
-    if (community == null) {
-        return TasteMatchUiModel.Unavailable(
-            "该作品暂无标签与社区评分，数据不足，无法计算口味匹配度（口味画像已生成）",
-        )
-    }
-    val fraction = if (userAvg != null) {
-        (0.5f + (community - userAvg) / 10f).coerceIn(0.1f, 0.9f)
-    } else {
-        // 没有你的平均分时，仅按社区评分粗估（7 分为中位）。
-        (community / 10f).coerceIn(0.1f, 0.9f)
-    }
-    val qualitative = when {
-        fraction >= 0.6f -> "可能会喜欢"
-        fraction >= 0.4f -> "可能感觉一般"
-        else -> "可能不太喜欢"
-    }
-    val basis = buildString {
-        append("该作品暂无标签，基于社区评分 ")
-        append("%.1f".format(community))
-        append("/10")
-        if (userAvg != null) append("、你的平均分 %.1f".format(userAvg))
-        append(" 与类型「${mediaType.label()}」粗略估计，仅供参考")
-    }
-    return TasteMatchUiModel.Available(
-        percentText = "${(fraction * 100).roundToInt()}%",
-        qualitativeText = qualitative,
-        fraction = fraction,
-        reason = basis,
     )
 }
 

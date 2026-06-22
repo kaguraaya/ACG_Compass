@@ -81,6 +81,7 @@ class TasteProfileViewModel @Inject constructor(
                                 tags = c.tags,
                                 reviewText = c.comment,
                                 status = c.status,
+                                updatedAt = c.updatedAt,
                             )
                         }
                         if (records.isEmpty()) {

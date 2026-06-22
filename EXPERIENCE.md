@@ -19,6 +19,10 @@
 | 4 | 导入一键加入待补池后被安利次数偏低（Property 11 示例侧） | `addBatchToBacklog` 对匹配作品 `.distinct()` 后才交给 `addAll`，使同一作品多次命中只计 1 次 | 去掉 `.distinct()`，按每条匹配命中传入，被安利计数由 `addAll` 逐次自增；待补池去重仍由 `addAll` 按 workId 负责 | 「被安利次数」语义=命中条数，去重与计数职责要分离 | RC.06.06 |
 | 5 | 凭据隔离属性测试 1.A 偶发泄露（脱敏后仍含完整值） | 测试生成器包含任意低熵串与以 `-` 开头的伪 JWT，裸日志行中无字段上下文且 `jwtRegex` 的 `\b` 无法锚定前导 `-`，无法识别为密钥 | 将密钥生成器收敛为贴近真实凭据形态（`sk-`/三段式以字母数字开头/字母数字混合长串），使「凭据绝不泄露」可被有效检验 | 属性测试应对「凭据」量化于真实形态；裸文本无上下文时只能按 shape 识别 | RC.00 1.7 / 19.3 |
 | 6 | `DetailViewModel` 注入 `GenerateSpoilerRadarUseCase` 后 Hilt 报 `AiProviderSelector cannot be provided` | `AiProviderSelector` 仅有实现类无 Hilt 绑定；此前无消费者触发校验，接入 ViewModel 后暴露缺失绑定 | 在 `AiModule` 以 `@Provides` 绑定 `DefaultAiProviderSelector` | 新增可注入依赖时，确保其全部传递依赖都有绑定；用 `:app:compileDebugUnitTestKotlin` 触发 Hilt 全图校验 | RC.14.01 |
+| 7 | 详情页评分人数错配（真值 2.7 万被显示成极小值/选成同名小说·漫画·二期的数据） | 评分修复只在**榜单**路径加了 `type=2` 过滤；**搜索/匹配**路径 `searchSubjects` 不传 filter，选代表 `representativeOf` 以匹配置信度为首排序键、评分人数仅次级 tiebreak，故同名小说/漫画/二期(343241/377761/550507) 置信度不低于 TV 动画(464376,27330) 时被选为代表 | （2026-06-23 已修复）选代表/反查/搜索排序四处统一改用「综合得分 `representativeScore` = 标题相似度 + 评分人数对数加成(≤0.18)」并对动画候选按 `type=2` 收敛；见 `CrossSourceMerge.representativeScore`，回归测试 `CrossSourceMergeTest` | 「修复」要覆盖**所有**调用路径（搜索+榜单+反查），勿只改一条；文档标「完成」前须按真实抓包数据回归，避免名实不符 | RC.01 3.7 |
+| 8 | 榜单滑到约第 20 名即提示「已到底部」，无法加载第 61+ 名 | `canLoadMore = 本页返回数 >= limit`，但 Bangumi 实验性 `search/subjects` 某页可能返回少于 limit 条（即便后面还有），被误判到底 | `searchRankedSubjects` 透出分页 `total`（新增 `BangumiRankedPage`/`RankingPage`）；上层 `offset += 本页返回数`、`canLoadMore = 本页非空 && offset < total` | 分页「是否到底」应以服务端 `total`/游标判定，**绝不**用「本页数 == pageSize」近似；实验性 API 尤其会短返回 | RC.05.04 |
+| 9 | 「今晚看什么·想看的标签」恒显示「暂无可用标签」、题材筛选筛不出内容、点推荐显示「暂无内容」 | 领域 `Work.tags` 由 `toWork()` 正确映射，但持久化层丢标签：`persistMatches`/`BangumiSyncManager` 落库只写 `WorkEntity`（不含 tags），`observeWorks` 又以 `toDomain(tags=emptyList())` 读出 → 候选池/facet 作品标签恒空 | 新增共享 `WorkTagWriter` 在两条入库路径写 `tags`+`work_tags`（统一主键 `category:name` 避免唯一索引冲突）；`observeWorks` 经新增 `TagDao.getTagsForWorks` 批量回填标签 | 领域模型「有字段」≠「已持久化」：跨「写实体」「读实体」两端都要核对字段是否真正落库/读出；连接表型字段最易在 `toEntity`/`toDomain` 边界被静默丢弃 | RC.05.06 / RC.07 |
+| 10 | 单元测试全部报 `Could not execute test class … ClassNotFoundException`（含最简 `SanityTest`，`clean` 后依旧），但 `compileDebugKotlin` 成功且 `.class` 已生成 | Gradle 测试 worker（fork JVM）运行时 classpath 无法解析已编译测试类；高度疑似工程路径含**空格 + 非 ASCII**（`ACG Compass de分支`）触发 Windows 下 test-worker classpath/pathing-jar 解析失败；叠加 `--tests` 过滤更易复现（Kotest 下尤甚） | 新算法暂以 `compileDebugKotlin` 全量编译 + 手算阈值验证；测试执行需在**无空格/无中文**路径（或 CI）运行，或排查 Gradle test worker classpath 配置 | 验证不能只靠 `--tests <Class>`（Kotest 会 ClassNotFound）；测试目录避免空格与非 ASCII；严格区分「编译 classpath OK」与「测试 fork 运行时 classpath」 | RC.00 / RC.08 |
 
 ## 详细记录
 
@@ -33,6 +37,29 @@
 - 相关 RC：RC.xx.yy
 - 复现步骤 / 备注：
 -->
+
+### [7] Bangumi 评分人数错配：评分修复未覆盖搜索/匹配路径（2026-06-22 复核确诊）
+- 问题现象：详情页某 TV 动画评分人数远小于真实值，或评分整体取了同名小说/漫画/二期的数据（真值如 2.7 万被显示为极小值）。
+- 抓包确诊（代理 `bgmapi.anibt.net` 数据可信，拔作岛 9582 已验证正确）：同一作品名下 Bangumi 有多条不同 type 条目——
+  - `464376` type=2(动画) platform=TV total=**27330** ← 真正的 TV 动画（应选）
+  - `343241` type=1(小说) total=2353
+  - `377761` type=1(漫画 @comic) total=206
+  - `550507` type=2(动画) total=11 ← 第二季（评分人数极少）
+- 原因：评分/人数修复只落到**榜单**路径（`BangumiRemoteDataSource.searchRankedSubjects` 用 `filter.type=[ANIME]`）。**搜索/匹配**路径未做 type 过滤：`searchSubjects` 默认 `filter=null`，`WorkRepositoryImpl.search` 调用 `bangumi.searchSubjects(keyword)` 不传 filter；选代表 `CrossSourceMerge.representativeOf` 以 `matchConfidence` 为首排序键，`popularity`(=`rating.total` 评分人数) 仅作同置信度的次级 tiebreak。当小说/漫画/二期标题置信度 ≥ TV 动画时，人数加权敌不过置信度，代表落到小条目 → 评分人数错配。
+- 修复方向（待修，用户要求先记录暂不动）：**搜索匹配「动画」作品时，对 Bangumi 候选先按 `type=2`(动画) 过滤排除小说/漫画，再按评分人数加权**（比单纯人数 tiebreak 更稳）。须同时覆盖 `searchSubjects`、`backfillBangumi` 反查等所有取 Bangumi 候选的路径。注意：全局搜索本身多源多媒介（含小说/漫画/游戏），过滤应「当目标被判定为动画时对 Bangumi 候选按 type=2 收敛」，而非全局只搜动画。
+- 避免策略：评分类「修复」必须覆盖**全部调用路径**并按真实抓包数据回归；文档标「已完成」前先验证，避免名实不符（本条即文档曾误标 P0-1 完成的教训）。
+- 相关 RC：RC.01 3.7（不伪造）。
+
+### [9] 候选池/题材筛选/今晚看什么标签恒空：领域有 tags 但未落库（2026-06-23 确诊并修复）
+- 问题现象：①推荐器「想看的标签」永远「暂无可用标签」；②发现页题材筛选选了也筛不出任何作品；③「今晚看什么」点心情进推荐后显示「暂无内容」。三处实为同一根因。
+- 根因：`BangumiSubjectDto.toWork()` 本就把社区标签映射进 `Work.tags`（前 15 个 `CONTENT`），但**持久化两端都丢了它**——
+  - 写：`WorkRepositoryImpl.persistMatches`（发现/搜索）与 `BangumiSyncManager`（个人收藏同步）落库都只 `workDao.upsert(work.toEntity(...))`，而 `Work.toEntity()` 不含 tags（标签存于 `tags` + `work_tags` 连接表），此前仅「备份恢复」路径会写连接表。
+  - 读：`observeWorks()` 用 `it.toDomain()`，其 `tags` 形参默认 `emptyList()`，未从连接表回填。
+  - 结果：候选池（`RecommenderViewModel.loadCandidates`）与题材 facet（`DiscoverBoards.buildFilterFacets`）拿到的作品 `tags` 恒空 → `computeAvailableTags` 空、`applyFilter` 题材永不命中、推荐 tag 硬筛 `matched.isEmpty()` 淘汰全部 → 空态。
+- 修复：抽出共享 `WorkTagWriter.persist(works)`，在 `persistMatches` 与 `BangumiSyncManager` 两条入库路径写 `tags`+`work_tags`；标签主键统一为 `"${category.name}:${name}"`（与 `tags` 表 `(category,name)` 唯一索引一致，两路径生成同 id 才不会在 upsert 时违反唯一索引而崩溃）。读侧 `observeWorks` 新增 `TagDao.getTagsForWorks(workIds)`（分批 ≤900 避开 SQLite 变量上限）批量回填 `toDomain(tags=...)`。
+- 注意（数据迁移）：存量作品的 `work_tags` 仍为空，需**重新同步一次**或**重进发现页触发公共池加载**后才补齐标签；新装/新数据无此问题。
+- 避免策略：领域模型「有字段」不代表「已持久化」。凡是经连接表存储的字段（tags、aliases→已在 WorkEntity 内联则另说），务必在 `toEntity`（写）与 `toDomain`（读）两端都显式核对；同一种数据存在多条入库路径时，抽公共写入器统一主键规则，避免「一条路径写得进、另一条 id 不一致写崩」。
+- 相关 RC：RC.05.06（高级筛选）/ RC.07（口味与标签）。
 
 ## 关联文档
 
@@ -100,6 +127,16 @@
 | 详情页像评分页 | 简介/角色/关联/路线 Tab 未接数据 | Work.summary（迁移 v3）+ 接 Bangumi characters/persons/relations + 结构化观看路线 | 详情区块结构先固定，缺字段填「暂无数据」 |
 | 发现页本季/榜单空 | 发现池仅本地已缓存作品 | 接 Jikan top/season 公共端点写入作品+评分 | 公共数据源无需 token，进入分区按需加载 + 错误重试 |
 | 观看路线只是文字 | route 仅渲染字符串 | 结构化 RouteEntry（主线/可选/可跳过）+ 可点击 + 一键加入待补池 | 关联关系本地分类，AI 仅排序不编造 |
+
+
+## 口味个性化增强轮（B 阶段，2026-06）根因与规避
+
+| 现象 | 根因 | 修复 | 规避 |
+|---|---|---|---|
+| 想给口味标签加「时间权重」又怕破坏计数守恒属性测试 | 直接对计数乘权重会让展示计数变非整数、且可能 > 桶样本数 | 计数仍取**原始出现次数**（整数），仅**排序**改用近因加权得分（半衰期 540 天 + 地板 0.3） | 把「排序信号」与「展示量」分离；守恒属性只约束展示量，加权只影响顺序；无时间戳退化为未加权（向后兼容） |
+| 榜单缓存想入 Room 但顾虑迁移风险 | 原实现用 DataStore 存换行拼接的 id blob 以规避迁移 | 新增 `ranking_cache` 表 + `MIGRATION_4_5`，DAO 整范围事务覆盖写 | 迁移 DDL 逐字对齐 Room 导出的 `schemas/N.json` 的 `createSql`；复合主键写 `PRIMARY KEY(a, b)`；构建后核对 5.json |
+| Room `@Transaction` 写在 interface 默认方法上是否真正织入事务存疑 | 项目无先例，Kotlin interface default + suspend 的事务织入不确定 | DAO 改用 `abstract class` + 具体 `open @Transaction` 方法（Room 文档规范写法） | 需要多语句事务的 DAO 一律用 abstract class，不用 interface 默认方法 |
+| 单元测试在本机必然失败（ClassNotFoundException） | 工程路径含空格+中文且 `android.overridePathCheck=true`，分叉的 JUnit/Kotest test runner classpath 解析失败 | 以 `compileDebugKotlin`/`compileDebugUnitTestKotlin` 编译为验证门；迁移测试参数化覆盖 `AcgMigrations.ALL`（androidTest，真机/模拟器跑） | 该环境验证以编译为准，最终交付用 `assembleDebug` 出 APK |
 
 
 ## H 轮：Bangumi 本地编辑回写排查（H15/H4）

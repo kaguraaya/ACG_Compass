@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/icon.svg" alt="ACG Compass app icon" width="112" height="112">
+</p>
+
 # ACG Compass · 多源 ACG 口味罗盘
 
 [![Platform](https://img.shields.io/badge/platform-Android%208.0%2B-3DDC84?logo=android&logoColor=white)](#environment)
@@ -22,6 +26,7 @@
 - [技术栈](#tech-stack)
 - [隐私与安全](#隐私与安全)
 - [参与贡献](#参与贡献)
+- [致谢](#致谢)
 - [许可证](#许可证)
 
 ---
@@ -127,6 +132,14 @@ app/src/main/java/com/acgcompass/
 2. 提交信息建议遵循 [Conventional Commits](https://www.conventionalcommits.org/)（如 `fix(rating): ...`）。
 3. 提交前请确保 `./gradlew :app:compileDebugKotlin` 与单元测试通过。
 4. 发起 PR 并简要描述动机与改动点。
+
+## 致谢
+
+感谢以下数据源与开源项目（数据、商标归各自平台所有；本项目仅用于个人 / 学习用途）：
+
+- **数据源**：[Bangumi](https://bgm.tv/)、[AniList](https://anilist.co/)、[Jikan](https://jikan.moe/)（非官方 MyAnimeList API）、[MyAnimeList](https://myanimelist.net/) 官方 API、[VNDB](https://vndb.org/)。
+- **核心开源技术**：Jetpack Compose · Material 3 · Hilt · Room · Retrofit / OkHttp · kotlinx.serialization · Kotlin Coroutines / Flow。
+- **学习参考**：开发中参考了多个优秀的开源 Bangumi / 追番客户端（如 animeko、czy0729/Bangumi、xiaoyvyv/bangumi 等）的接口实现思路；其源码仅作本地研究、未包含在本仓库（见 `.gitignore`）。
 
 ## 许可证
 

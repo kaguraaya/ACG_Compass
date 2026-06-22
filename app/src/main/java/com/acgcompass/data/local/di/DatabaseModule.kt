@@ -7,6 +7,7 @@ import com.acgcompass.data.local.dao.AiResultDao
 import com.acgcompass.data.local.dao.BacklogDao
 import com.acgcompass.data.local.dao.CredentialMetaDao
 import com.acgcompass.data.local.dao.ImportDao
+import com.acgcompass.data.local.dao.RankingCacheDao
 import com.acgcompass.data.local.dao.RatingDao
 import com.acgcompass.data.local.dao.RouteNodeDao
 import com.acgcompass.data.local.dao.SnapshotDao
@@ -100,4 +101,8 @@ object DatabaseModule {
     @Provides
     @Singleton
     fun provideUserCollectionDao(db: AcgCompassDatabase): UserCollectionDao = db.userCollectionDao()
+
+    @Provides
+    @Singleton
+    fun provideRankingCacheDao(db: AcgCompassDatabase): RankingCacheDao = db.rankingCacheDao()
 }

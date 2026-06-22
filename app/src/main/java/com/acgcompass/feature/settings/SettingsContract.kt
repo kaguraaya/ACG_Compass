@@ -215,6 +215,10 @@ data class PrivacyCardState(
     val recordTimeMachineSnapshots: Boolean = true,
     /** H7：自动同步间隔（分钟），0 表示关闭。 */
     val autoSyncIntervalMinutes: Int = 0,
+    /** Phase④：推荐过滤的社区均分下限（0~10，0=不限）。 */
+    val recommendMinCommunityScore: Float = 6.0f,
+    /** Phase④：口味匹配度阈值（0~1，0=关闭过滤）。 */
+    val tasteMatchThreshold: Float = 0.0f,
 )
 
 /**

@@ -59,7 +59,7 @@ private const val HOME_MOD_DRAW = "daily_draw"
  */
 @Composable
 fun HomeRoute(
-    onOpenRecommender: () -> Unit,
+    onOpenRecommender: (List<String>) -> Unit,
     onOpenSearch: () -> Unit,
     onOpenImport: () -> Unit,
     onOpenWork: (String) -> Unit,
@@ -86,7 +86,6 @@ fun HomeRoute(
     }
     HomeScreen(
         state = state,
-        onMoodSelected = viewModel::onMoodSelected,
         onManualSync = viewModel::onManualSync,
         onOpenRecommender = onOpenRecommender,
         onOpenSearch = onOpenSearch,
@@ -105,9 +104,8 @@ fun HomeRoute(
 @Composable
 fun HomeScreen(
     state: UiState<HomeUiState>,
-    onMoodSelected: (HomeMood) -> Unit,
     onManualSync: () -> Unit,
-    onOpenRecommender: () -> Unit,
+    onOpenRecommender: (List<String>) -> Unit,
     onOpenSearch: () -> Unit,
     onOpenImport: () -> Unit,
     onOpenWork: (String) -> Unit,
@@ -143,7 +141,6 @@ fun HomeScreen(
         ) { data ->
             HomeContent(
                 data = data,
-                onMoodSelected = onMoodSelected,
                 onManualSync = onManualSync,
                 onOpenRecommender = onOpenRecommender,
                 onOpenWork = onOpenWork,
@@ -156,9 +153,8 @@ fun HomeScreen(
 @Composable
 private fun HomeContent(
     data: HomeUiState,
-    onMoodSelected: (HomeMood) -> Unit,
     onManualSync: () -> Unit,
-    onOpenRecommender: () -> Unit,
+    onOpenRecommender: (List<String>) -> Unit,
     onOpenWork: (String) -> Unit,
 ) {
     LazyColumn(
@@ -175,20 +171,23 @@ private fun HomeContent(
         // 今晚看什么大卡（RC.04.01）。
         if (HOME_MOD_TODAY in data.enabledModules) {
             item(key = "hero") {
-                TonightHeroCard(onClick = onOpenRecommender)
+                TonightHeroCard(onClick = { onOpenRecommender(emptyList()) })
             }
 
-            // 今日状态选择（RC.04.02）。
+            // P2-8：今日状态——重定义为「今晚看什么」快捷入口：点某心情直接带预填标签跳推荐器。
             item(key = "moods") {
-                SectionTitle("今日状态")
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    SectionTitle("今晚想看哪种？")
+                    HintText("点一个，直接带着标签去「今晚看什么」帮你挑")
+                }
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     data.moods.forEach { mood ->
                         FilterChip(
-                            selected = data.selectedMood == mood,
-                            onClick = { onMoodSelected(mood) },
+                            selected = false,
+                            onClick = { onOpenRecommender(mood.presetTags) },
                             label = { Text(mood.label) },
                         )
                     }
@@ -436,7 +435,6 @@ private fun HomeScreenPreview() {
                     ),
                 ),
             ),
-            onMoodSelected = {},
             onManualSync = {},
             onOpenRecommender = {},
             onOpenSearch = {},

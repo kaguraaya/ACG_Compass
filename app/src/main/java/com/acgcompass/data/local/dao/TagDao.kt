@@ -56,4 +56,22 @@ interface TagDao {
 
     @Query("DELETE FROM tags WHERE id = :id")
     suspend fun deleteById(id: String)
+
+    /**
+     * P2-5/P2-6：批量读取多部作品的社区标签（join tags×work_tags），按 [workIds] 过滤。
+     * 供 `observeWorks` 一次性回填作品标签（候选池/题材筛选/今晚看什么需真实 tag）；
+     * 调用方需分批（≤999）以避开 SQLite 变量上限。
+     */
+    @Query(
+        "SELECT wt.workId AS workId, t.category AS category, t.name AS name " +
+            "FROM work_tags wt INNER JOIN tags t ON t.id = wt.tagId WHERE wt.workId IN (:workIds)",
+    )
+    suspend fun getTagsForWorks(workIds: List<String>): List<WorkTagWithCategory>
 }
+
+/** P2-5/P2-6：`getTagsForWorks` 的投影行——某作品的一条社区标签（含分类，供重建领域 `Tag`）。 */
+data class WorkTagWithCategory(
+    val workId: String,
+    val category: String,
+    val name: String,
+)

@@ -91,6 +91,37 @@ class TasteStatsCalculatorTest : StringSpec({
         stats.droppedTypes.first() shouldBe NameCount("长篇", 2)
     }
 
+    // --- 时间建权（B-2） --------------------------------------------------
+
+    "时间建权：近期评分的标签排序优先于更高频次的早期标签" {
+        val halfLife = TasteStatsCalculator.RECENCY_HALF_LIFE_MILLIS
+        val now = 10L * halfLife
+        val old = now - 3L * halfLife // 约 3 个半衰期前 → 权重衰减到地板 0.3
+        val records = listOf(
+            // 早期高分：标签 A 出现两条（原始计数 2），但久远。
+            TasteInputRecord(rating = 9, tags = listOf("A"), updatedAt = old),
+            TasteInputRecord(rating = 9, tags = listOf("A"), updatedAt = old),
+            // 近期高分：标签 B 仅一条（原始计数 1），但为最新（权重 1.0）。
+            TasteInputRecord(rating = 9, tags = listOf("B"), updatedAt = now),
+        )
+        val stats = calculator(records)
+        // A 加权 ≈ 0.3 + 0.3 = 0.6 < B 加权 1.0 → B 居首，尽管 A 原始计数更高。
+        stats.highScoreTags.first().name shouldBe "B"
+        // 展示计数仍为原始出现次数：A=2、B=1（直观且满足守恒）。
+        stats.highScoreTags.first { it.name == "A" }.count shouldBe 2
+        stats.highScoreTags.first { it.name == "B" }.count shouldBe 1
+    }
+
+    "无时间戳时退化为未加权（向后兼容）：仍按原始频次排序" {
+        val records = listOf(
+            TasteInputRecord(rating = 9, tags = listOf("科幻")),
+            TasteInputRecord(rating = 9, tags = listOf("科幻")),
+            TasteInputRecord(rating = 9, tags = listOf("日常")),
+        )
+        val stats = calculator(records)
+        stats.highScoreTags.first() shouldBe NameCount("科幻", 2)
+    }
+
     // --- Property 13: 口味统计守恒 ----------------------------------------
     // Validates: Requirements 12.2
 

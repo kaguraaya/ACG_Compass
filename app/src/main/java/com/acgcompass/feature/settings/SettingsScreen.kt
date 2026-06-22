@@ -108,6 +108,9 @@ data class SettingsActions(
     val onBangumiConsentChange: (Boolean) -> Unit = {},
     // H7：自动同步间隔（分钟，0=关闭）
     val onSetAutoSyncInterval: (Int) -> Unit = {},
+    // Phase④：推荐社区均分下限 / 口味匹配度阈值
+    val onSetRecommendMinScore: (Float) -> Unit = {},
+    val onSetTasteMatchThreshold: (Float) -> Unit = {},
 )
 
 /**
@@ -353,6 +356,8 @@ private fun rememberSettingsActions(
             onSaveBangumiCustomUrl = viewModel::onSaveBangumiCustomUrl,
             onBangumiConsentChange = viewModel::onBangumiConsentChange,
             onSetAutoSyncInterval = viewModel::onSetAutoSyncInterval,
+            onSetRecommendMinScore = viewModel::onSetRecommendMinScore,
+            onSetTasteMatchThreshold = viewModel::onSetTasteMatchThreshold,
         )
     }
     return actions
@@ -360,6 +365,26 @@ private fun rememberSettingsActions(
 
 /** 「凭据仅保存在本机」提示文案（RC.02 4.4 / RC.00）。 */
 private const val SAVE_NOTICE_TEXT = "凭据仅保存在本机，用于直接向第三方服务请求数据"
+
+/** Phase④：推荐社区均分下限选项（标签 to 分值）。0=不限。 */
+private val RecommendMinScoreOptions: List<Pair<String, Float>> = listOf(
+    "不限" to 0f,
+    "5.0" to 5.0f,
+    "6.0" to 6.0f,
+    "6.5" to 6.5f,
+    "7.0" to 7.0f,
+    "7.5" to 7.5f,
+    "8.0" to 8.0f,
+)
+
+/** Phase④：口味匹配度阈值选项（标签 to 阈值）。0=关闭过滤（不自动重 roll）。 */
+private val TasteMatchThresholdOptions: List<Pair<String, Float>> = listOf(
+    "关闭" to 0f,
+    "40%" to 0.4f,
+    "55%" to 0.55f,
+    "65%" to 0.65f,
+    "75%" to 0.75f,
+)
 
 /** H7：自动同步间隔选项（标签 to 分钟）。0=关闭；WorkManager 周期下限为 15 分钟。 */
 private val AutoSyncIntervalOptions: List<Pair<String, Int>> = listOf(
@@ -1051,6 +1076,42 @@ internal fun PrivacySettingsCard(
                 FilterChip(
                     selected = card.autoSyncIntervalMinutes == minutes,
                     onClick = { actions.onSetAutoSyncInterval(minutes) },
+                    label = { Text(label, maxLines = 1) },
+                )
+            }
+        }
+
+        HorizontalDivider()
+
+        // Phase④：推荐与口味偏好——推荐最低社区分 + 口味匹配度阈值（低于则不推，相当于自动重 roll）。
+        Text(text = "推荐与口味", style = MaterialTheme.typography.titleSmall)
+        Text(
+            text = "「今晚看什么」只推荐社区均分 ≥ 下限、且口味匹配度 ≥ 阈值的作品；阈值越高越严格（结果可能更少）。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(text = "推荐最低社区分", style = MaterialTheme.typography.bodyMedium)
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        ) {
+            RecommendMinScoreOptions.forEach { (label, score) ->
+                FilterChip(
+                    selected = kotlin.math.abs(card.recommendMinCommunityScore - score) < 0.01f,
+                    onClick = { actions.onSetRecommendMinScore(score) },
+                    label = { Text(label, maxLines = 1) },
+                )
+            }
+        }
+        Text(text = "口味匹配度阈值（低于则不推）", style = MaterialTheme.typography.bodyMedium)
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        ) {
+            TasteMatchThresholdOptions.forEach { (label, threshold) ->
+                FilterChip(
+                    selected = kotlin.math.abs(card.tasteMatchThreshold - threshold) < 0.01f,
+                    onClick = { actions.onSetTasteMatchThreshold(threshold) },
                     label = { Text(label, maxLines = 1) },
                 )
             }

@@ -20,7 +20,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import kotlin.coroutines.cancellation.CancellationException
@@ -54,9 +53,6 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch { runCatching { workRepository.loadPublicDiscovery() } }
     }
 
-    /** 当前选中的今日状态（RC.04.02）；`null` 表示未选择。 */
-    private val selectedMood = MutableStateFlow<HomeMood?>(null)
-
     private val _syncMessage = MutableStateFlow<String?>(null)
 
     /** 同步结果一次性提示；`需配置` 时提示去设置。消费后调用 [clearSyncMessage]。 */
@@ -71,14 +67,13 @@ class HomeViewModel @Inject constructor(
         combine(
             backlogRepository.observeBacklog(BacklogFilter.NONE, BacklogSort.ADDED_DESC),
             workRepository.observeWorks(),
-            selectedMood,
             credentialStore.observeStatus(),
             combine(
                 syncStatusRepository.status,
                 settingsDataStore.homeModules,
                 userCollectionDao.observeAll(),
             ) { s, m, collections -> Triple(s, m, collections) },
-        ) { items, works, mood, statuses, syncModulesCollections ->
+        ) { items, works, statuses, syncModulesCollections ->
             val syncStatus = syncModulesCollections.first
             val enabledModules = syncModulesCollections.second
             val collections = syncModulesCollections.third
@@ -89,7 +84,6 @@ class HomeViewModel @Inject constructor(
             } else {
                 UiState.Success(
                     HomeUiState(
-                        selectedMood = mood,
                         continueItems = buildContinueItems(collections, worksById),
                         backlogSummary = buildBacklogSummary(entries),
                         syncReminder = buildSyncReminder(statuses, System.currentTimeMillis(), syncStatus),
@@ -107,11 +101,6 @@ class HomeViewModel @Inject constructor(
             started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS),
             initialValue = UiState.Loading,
         )
-
-    /** 选择 / 取消今日状态（再次点击同一项取消，RC.04.02）。 */
-    fun onMoodSelected(mood: HomeMood) {
-        selectedMood.update { current -> if (current == mood) null else mood }
-    }
 
     /**
      * 手动同步入口（RC.04.05 / R85）。已配置 Bangumi → 真正调用 [BangumiSyncManager] 拉取入库，

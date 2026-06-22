@@ -93,6 +93,23 @@ object AcgMigrations {
     }
 
     /**
+     * v4 -> v5（B-4）：新增 `ranking_cache` 表（榜单结果本地缓存：范围键 + 排名次序 + 作品 id + 缓存时间）。
+     * 由 DataStore Preferences 迁移而来；仅 CREATE TABLE，不触碰既有表，**不丢任何用户数据**。
+     * DDL 与 [com.acgcompass.data.local.entity.RankingCacheEntity] 生成的期望 schema 完全一致
+     * （列名/类型/可空/复合主键），以通过 Room 运行时校验与迁移测试。
+     */
+    private val MIGRATION_4_5 = Migration(4, 5) { db ->
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `ranking_cache` (" +
+                "`scopeKey` TEXT NOT NULL, " +
+                "`position` INTEGER NOT NULL, " +
+                "`workId` TEXT NOT NULL, " +
+                "`cachedAt` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`scopeKey`, `position`))",
+        )
+    }
+
+    /**
      * All registered migrations, ordered ascending by `startVersion`.
      *
      * Spread into the Room builder with `.addMigrations(*AcgMigrations.ALL)`.
@@ -101,5 +118,6 @@ object AcgMigrations {
         MIGRATION_1_2,
         MIGRATION_2_3,
         MIGRATION_3_4,
+        MIGRATION_4_5,
     )
 }
