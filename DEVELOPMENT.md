@@ -37,6 +37,7 @@
 | 速率限制 | 官方 OpenAPI（`v0.yaml`）与文档**未公开明确的数值速率限制**；强约束为 **User-Agent 要求**（见下）与部分接口缓存（如 `getSubjectById` 缓存 300s）。实现按通用礼貌节流并在接近上限时退避；**确切阈值需复核**最新官方说明，不臆造数值。 |
 | User-Agent | 官方明确要求：非浏览器调用者必须设置**包含开发者个人 ID + 应用名称**的 User-Agent；需分发的应用（如 Android 客户端）须附**版本号**；开源项目应附**项目主页**。各类请求库的默认 UA 可能被禁用，且**禁止**使用 `Bangumi/1.0`、`database` 等模糊 UA。官方示例：`czy0729/Bangumi/6.4.0 (Android) (http://github.com/czy0729/Bangumi)`。本项目应配置形如 `<owner>/ACG-Compass/<versionName> (Android) (<repo-url>)` 的 UA（对应需求 3 AC2 / RC.01；具体值在 `core/network` UA 拦截器实现）。 |
 | 数据迁移 | 本次为接口契约核验，无 Room schema 变更。后续若以本地缓存持久化 Bangumi 条目/收藏，需在「数据迁移说明（汇总）」登记版本与迁移策略；因 `/v0/search/subjects` 为实验性 API、`Subject` 完整字段待复核，DTO 应对未知/缺失字段保持向后兼容（可空 + 忽略未知键），避免 schema 变动导致解析失败。 |
+| OAuth 登录实现（0.13.0） | 已落地**应用内 WebView 授权码登录 + 启动期自动续期 + 内置共享应用**（纯客户端、无后端中转）：`BangumiOAuthApi`（`POST bgm.tv/oauth/access_token`，form-urlencoded）/ `BangumiOAuthClient`（拼授权 URL + 换取/刷新；生效凭据 = 用户自填 ?: 内置默认）/ `BangumiOAuthScreen`（WebView 拦截回调 `acgcompass://oauth/bangumi/callback` 取 `code` 并校验 `state`）/ `BangumiTokenRefresher`（启动时剩余寿命<2天则用 `refresh_token` 续期）。**内置应用凭据**经 `local.properties`（gitignored）→ `BuildConfig.BANGUMI_CLIENT_ID/SECRET` → `BangumiModule` `@Named` 注入，所有最终用户共用、仅需点「登录」、无需注册；留空则回退用户自填。`access_token`/`refresh_token`/过期时刻存入加密 `CredentialStore`（`SecretBundle.refreshToken`/`tokenExpiresAt`，非 Room、非默认备份）。详见技术决策 TD-13.1。 |
 
 ### AniList（P1 辅助数据源）
 
@@ -156,10 +157,21 @@
 | v3 | 待填写 | `works` 新增可空 `summary` 列（F7，作品简介） | `MIGRATION_2_3`：仅 `ALTER TABLE ADD COLUMN`（TEXT，可空） | 同上 |
 | v4 | 待填写 | `works` 新增可空 `airDate` 列（I16，开播/发行日期） | `MIGRATION_3_4`：仅 `ALTER TABLE ADD COLUMN`（TEXT，可空） | 同上 |
 | v5 | 2026-06 | 新增 `ranking_cache` 表（B-4，榜单结果本地缓存：范围键+排名次序+作品 id+缓存时间），由 DataStore Preferences 迁移而来 | `MIGRATION_4_5`：仅 `CREATE TABLE`（复合主键 `scopeKey,position`），DDL 与 Room 期望 schema 一致 | 同上（非破坏，仅派生缓存） |
+| v6 | 2026-06 | `backlog_items` 新增可空 `prevStatus` 列（吃灰馆移出/还原保留原状态） | `MIGRATION_5_6`：仅 `ALTER TABLE ADD COLUMN`（TEXT，可空） | 同上 |
+| v7 | 2026-06 | 新增 `work_features`（12 维特征缓存：社区标签计数 + staff/角色/CV + 社区分/票数 + 集数/时长/平台）与 `recommendation_exposure`（推荐曝光记录，支撑重复推荐冷却）两表（最终版算法） | `MIGRATION_6_7`：仅 `CREATE TABLE`，DDL 与 Entity 期望 schema 一致 | 同上（非破坏，纯新增缓存/记录表） |
+| v8 | 2026-06 | `works` 新增可空 `titleCn` 列（中文标题，Bangumi `name_cn`，D2 卡片/榜单/列表中文优先展示） | `MIGRATION_7_8`：仅 `ALTER TABLE ADD COLUMN`（TEXT，可空） | 同上 |
 
 ## 技术决策记录
 
 > 记录影响实现方式的关键技术取舍，便于后续可追溯与平滑替换。
+
+### TD-13.1：Bangumi OAuth —「内置共享应用 + WebView 拦截回调 + 启动期续期」，不照搬 animeko 后端中转
+
+- **背景（0.13.0 / RC.02 4.6）**：用户要求「像 animeko 那样一键 Bangumi 登录 + token 自动刷新」。核验 animeko 架构确认其登录依赖**自建后端**（`auth.myani.org` 等）作 OAuth 中转、由服务端保管 `client_secret` 并处理回调；ACG Compass 纯本地无后端，**无法照搬**。
+- **已联网核验（`bangumi/api` How-to-Auth，2026-06）**：Bangumi 令牌端点 `POST bgm.tv/oauth/access_token`（换取 / `grant_type=refresh_token` 刷新）**强制 `client_secret`（必填）**、**不支持 PKCE**（无 `code_verifier`/`code_challenge`）。故「用户只需登录、无需注册」在无后端时只能靠**内置一个共享应用**。
+- **决策**：① **内置共享应用凭据**——开发者在 `bgm.tv/dev/app` 注册**一次**，把 `client_id`/`client_secret` 放 `local.properties`（gitignored）→ `BuildConfig` → Hilt `@Named` 注入 `BangumiOAuthClient`；所有最终用户共用、仅需点「登录」。`requireClientId/Secret` 取「用户自填 ?: 内置默认」，故高级用户仍可自托管覆盖、缺省构建可零内置回退自填。② 回调用**应用内 WebView 拦截自定义 scheme**（`acgcompass://oauth/bangumi/callback`）而非系统 deep-link——自包含、无需 Manifest 注册。③ 自动续期放**启动期**（`BangumiTokenRefresher`，剩余<2天则刷新）而非 OkHttp `Authenticator`/`AuthInterceptor`——避免「base `OkHttpClient` → `AuthInterceptor` → `BangumiOAuthClient` → 同一 `Retrofit`」的 Hilt 依赖环；令牌端点复用共享 `Retrofit.Builder`、不打 Bangumi `@Tag`，故不被鉴权/反代改写拦截器处理（始终走官方 `bgm.tv`）。
+- **RC.00 立场（扩展说明）**：本项目「零内置密钥」原指**绝不内置用户的/付费的凭据**（AI key、用户 token）。OAuth **应用自身**的 `client_secret` 标识「ACG Compass 这个应用」而非任何用户，RFC 6749 §2.1 / RFC 8252 亦明确 native client 无法真正保密 secret；折中为：内置值只放 gitignored 的 `local.properties`（不进源码、不进 git），APK 内存在但属 native OAuth 的已知权衡。**用户 token 仍各自登录获得、存各自本机加密存储**——此条不破坏。
+- **平滑替换**：若日后自建中转服务端，可在 `BangumiOAuthClient` 增「服务端换取」实现并保留现有客户端直连作为降级。
 
 ### TD-8.1：AniList GraphQL 暂用薄 OkHttp POST 调用器，不应用 Apollo codegen 插件
 
@@ -473,3 +485,58 @@
 - **APK 产物**：`app/build/outputs/apk/debug/app-debug.apk`（含本轮 P1-2/P2-2/P2-3/P2-8 及此前 P2-1/P2-4/P2-5）。
 - **V2 清单状态**：P0-1～P3-1 全部已实现并编译通过；剩余仅「真机功能回归」与「纯英文路径下跑单测」两项环境/验证事项。
 - **单元测试环境问题**：当前项目路径含中文「分支」，Windows + Kotest（JUnit Platform）类加载报 `ClassNotFoundException`（连无关的 `SanityTest` 亦失败），属环境问题（非代码缺陷）；`--tests` 过滤与 `--no-configuration-cache` 均无效。建议将仓库移至**纯英文路径**后执行 `:app:testDebugUnitTest` 验证（CI Linux 纯英文路径不受影响）。
+
+## 口味算法（最终版 12 维引擎）架构与数据迁移（2026-06-23）
+
+> 目标（用户诉求）：① 详情页口味匹配度别再「都挤在 55–65」、低口味作品别给高分；② 今晚看什么别再推社区低分 / 低匹配作品；③ 评分后画像自动更新可感知。本轮按 `算法文档/` 落地「画像层 + 候选层 + 校准层」，与旧 `PersonalTasteScorer` **并存**（引擎不可用时回退旧逻辑，绝不退化）。
+
+### 新增持久化（Room v6 → v7 迁移）
+
+- **`work_features`**：作品特征缓存（`subjectId` 主键、社区标签计数 JSON、`bangumiScore`/`bangumiVotes`、staff/角色/CV 结构化、`titleVariants`、`fetchedAt`）。画像构建与候选打分共用，避免重复联网。
+- **`recommendation_exposure`**：今晚看什么曝光记录（`exposedAt`/`clickedAt`/`dismissedAt`），支撑**重复推荐冷却**（默认 14 天）与后续点击统计。
+- **迁移**：`MIGRATION_6_7` 仅 `CREATE TABLE IF NOT EXISTS`（纯新增表，存量数据零风险）；`AppDatabase.version=7`，已在 `DatabaseModule` 注册。`work_features` 为缓存，存量用户首次「导入口味数据」时联网回填。
+
+### 分层与关键类
+
+- **特征层** `WorkFeatureRepository`（`data/taste/WorkFeatureRepositoryImpl`）：按 `subjectId` 取/补 `work_features`，`getFeatures(ids, networkBudget)` 限额联网（画像构建 60、今晚精排 24）。
+- **分类层** `TagClassifier` + `TasteCategory`（12 类：题材/装置/XP/Staff/角色/CV/工作室/系列/情绪/节奏/质量/短评）：把社区标签 + 结构化信号归类，题材标签计数做对数压缩 `q=ln(1+count)/ln(1+maxCount)`。
+- **画像层** `BuildTasteProfileUseCase` → `AdvancedTasteProfile`：样本选择（≤50，强制纳入极端分/有短评）、时间×极端×短评加权、逐标签正负向量、题材+装置 2/3 元**组合挖掘**、对训练样本求 `z` 分布得温度化 logistic 的 `μ=median(z)`、`τ=max(0.18,std(z))`。
+- **候选/校准层** `ComputeTasteMatchUseCase`（`TasteRawScorer` 求十二维融合 `z` → 已评分同作偏置 `0.12·pref` → `p=σ((z-μ)/τ)` → `50+sign·min(45,1.18·|100p-50|)` 拉开到 `[5,95]`）。**分数拉开**正是治「挤在 55–65」的关键。
+- **编排层** `TasteEngine`（`@Singleton`）：粘合「`user_collections` × `work_features`」与上述纯用例，内存 `StateFlow` 缓存画像。`rebuildFromCache()`（不联网，评分后即时）、`refreshFull()`（导入时联网补齐）、`score()`/`scoreBatch()`（详情/今晚）。
+
+### 接线点
+
+- **详情页**：`DetailViewModel.advancedTasteMatch` 随作品/我的评分/画像变化用 `TasteEngine.score()` 重算，经 `buildDetailUiState(advancedMatch=…)` → `TasteMatchResult.toTasteMatchUi()` 渲染（分段定性 + 命中大类理由 + 低置信/已评分说明）；引擎不可用回退旧 `toTasteMatch`。
+- **今晚看什么**：`RecommenderViewModel` 召回后对候选 `scoreBatch(networkBudget=24)` 精排（引擎匹配度为主导分量），叠加**社区分下限 6.0 + 口味下限**双护栏与 **14 天重复冷却**，并 `recordExposure` 记录曝光。
+- **画像自动更新**：评分保存后 `refreshTasteProfileFromLocal()` 同时重建旧画像与 `TasteEngine.rebuildFromCache()`；详情页保存提示在确有评分时追加「口味画像已自动更新」。
+- **导入触发**：`TasteProfileViewModel.onImportFromBangumi` 成功后 `TasteEngine.refreshFull()` 联网补齐 `work_features` 并建高级画像。
+
+### 验证
+
+- `:app:compileDebugKotlin` 与 `:app:compileDebugUnitTestKotlin` 均通过（exit 0）。
+- 锚点回归 `domain/taste/TasteEngineAnchorTest`（kotest）：偏爱「奇幻+异世界+智斗」、厌恶「恋爱+日常」的合成用户，断言强命中候选显著高分、反口味低分且**拉开差距**、组合优于单题材、已评分偏置、分数恒在 `[5,95]`、空画像中性兜底。**因路径含中文无法本机运行（见经验#10），仅作可编译规范，请在纯英文路径/CI 运行。**
+- 修复了与本轮无关但阻塞测试编译的 `RouteMapRepositoryImplTest.FakeBacklogRepository`（缺 `archiveToDust`/`restoreFromDust` 实现，接口在「吃灰馆还原」一轮新增后未同步该 fake）。
+
+## 0.15.0 体验修复与详情跨源（N1–N12）
+
+### 评分差异榜同番去重（N1，`feature/discover/DiscoverBoards.kt`）
+- `buildScoreDiffBoard` 前置 `dedupeSameWork`：按标题变体（canonical/cn/ja/romaji/en/aliases → `normalizeCompact`，长度≥4 去噪）交集做并查集聚类；每簇取来源优先级最高（Bangumi>AniList>MAL>Jikan>VNDB）且评分源更全者为代表。**只去重不合并分值**（避免误并邻季导致分数错配）。
+
+### 首启默认 + 新手引导（N6，`feature/onboarding/*`、`data/datastore/SettingsState`）
+- 默认值：`DEFAULT_JIKAN_ENABLED=true`、`DEFAULT_VNDB_ENABLED=true`（成人内容默认关）、`DEFAULT_TASTE_MATCH_THRESHOLD=0.4`；新增 `COMMUNITY_PROXY_BANGUMI_API_BASE_URL="https://bgmapi.anibt.net/"`（官方常量保留用于 isOfficial 判定与「切回官方」）。
+- 引导：`OnboardingUiState` 增 `consentPrompt`，highlights 增「反代默认 / 多源开箱 / AI 可选（DeepSeek 等）」；`OnboardingScreen` 加同意勾选并经 `onConfirm(consented)` 上抛；`OnboardingViewModel.onOnboardingComplete(consentToProxyToken)` 在**首启**写入反代地址 + `bangumiNonOfficialTokenConsent`。仅首启写入，不影响老用户既有官方配置。
+
+### 口味下限「关闭」真关闭（N4/N5，`RecommenderViewModel`）
+- 热路径 `scoreBatch(networkBudget=0)` 只读缓存、后台重建画像不阻塞首屏。`tasteFloor = threshold`（不再 `coerceAtLeast(0.45)`）；`passesTaste = tasteFloor<=0 || match>=tasteFloor`；候选不足时逐级放宽（社区分下限→口味下限→冷却）再兜底，绝不空手。
+
+### 详情页关联条目跨源评分补齐（N12，`data/repository/WorkRepositoryImpl`）
+- 现象：`buildRouteEntries` 用 `rel.id`（Bangumi subjectId）作 workId，跳转打开的关联条目仅 Bangumi 源 → 详情只显示 Bangumi 评分。
+- 原 `crossValidateRatings` 逐源按绝对相似度阈值（`CROSS_MATCH_THRESHOLD=0.86`）匹配，续作（第N期）/ 跨语言标题常低于阈值漏配。
+- 新增 `enrichViaCrossSourceSearch(workId)`：仅动画、已≥2 源即跳过；用作品标题变体多源并行搜索（AniList/Jikan/MAL），以本作为锚点参与 `clusterMatches`（`sameWork` 季度感知、跨变体相似、核心包含），把**同簇**其他源的评分与 source link 挂到本 workId。在 `refreshRatingsAndWork` 中**先于** `crossValidateRatings` 调用（聚类更稳，交叉验证兜底剩余源）。
+
+### AI 标签分维分类（N3，可行性，未落地）
+- 项目已具备完整 AI 管线（`AiEngine`/`AiEngineImpl`、`AiTask` 五类、`OpenAiCompatibleProvider`、`AiTaskSpecs` prompt+schema、`SpoilerGuard`、`CredentialStore`；response_format json_schema→json_object→text 降级兼容 DeepSeek）。
+- 设计（下一步）：新增 `AiTask.TagClassify`（输出 `[{tag,category}]` 数组 + confidence）或独立用例；`TagClassifier` 增进程级 `@Volatile` 覆盖表（优先于规则）；`TasteEngine` 在画像重建后于后台批量分类未知标签并持久化（DataStore）；未配置 AI 回退规则分类器。
+
+### 验证（0.15.0）
+- `:app:compileDebugKotlin` 与 `:app:assembleDebug` 均 **BUILD SUCCESSFUL**（本机路径含空格 + 中文，assembleDebug 可出 APK；单元测试仍受路径限制，见经验 #10）。版本 `0.14.0`→`0.15.0`（`versionCode 14→15`）。

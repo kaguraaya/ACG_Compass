@@ -25,6 +25,9 @@ import javax.inject.Singleton
  */
 private const val SETTINGS_DATASTORE_NAME = "acg_compass_settings"
 
+/** #10：搜索历史最多保留条数（最新在前，超出截断）。 */
+private const val MAX_SEARCH_HISTORY = 10
+
 internal val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
     name = SETTINGS_DATASTORE_NAME,
 )
@@ -147,6 +150,68 @@ class SettingsDataStore @Inject constructor(
     suspend fun setBacklogGridMode(grid: Boolean) {
         dataStore.edit { it[Keys.BACKLOG_GRID_MODE] = grid }
     }
+
+    /** #10：最近搜索历史（最新在前，最多 [MAX_SEARCH_HISTORY] 条）。以换行分隔持久化、读时清洗空项。 */
+    val searchHistory: Flow<List<String>> =
+        dataStore.data.map { prefs -> prefs[Keys.SEARCH_HISTORY].toHistoryList() }
+
+    /** #10：记录一次搜索关键词——去重后置顶、截断到上限；空白忽略（供搜索页空态「历史搜索」展示）。 */
+    suspend fun addSearchHistory(query: String) {
+        val q = query.trim()
+        if (q.isEmpty()) return
+        dataStore.edit { prefs ->
+            val current = prefs[Keys.SEARCH_HISTORY].toHistoryList()
+            val next = (listOf(q) + current.filterNot { it.equals(q, ignoreCase = true) }).take(MAX_SEARCH_HISTORY)
+            prefs[Keys.SEARCH_HISTORY] = next.joinToString("\n")
+        }
+    }
+
+    /** #10：删除单条搜索历史。 */
+    suspend fun removeSearchHistory(query: String) {
+        dataStore.edit { prefs ->
+            val next = prefs[Keys.SEARCH_HISTORY].toHistoryList().filterNot { it == query }
+            if (next.isEmpty()) prefs.remove(Keys.SEARCH_HISTORY) else prefs[Keys.SEARCH_HISTORY] = next.joinToString("\n")
+        }
+    }
+
+    /** #10：清空搜索历史。 */
+    suspend fun clearSearchHistory() {
+        dataStore.edit { it.remove(Keys.SEARCH_HISTORY) }
+    }
+
+    /** D1：当前 Bangumi 用户名（登录/同步后由 `/v0/me` 写入）；未登录为 `null`。 */
+    val bangumiUsername: Flow<String?> =
+        dataStore.data.map { it[Keys.BANGUMI_USERNAME]?.takeIf { n -> n.isNotBlank() } }
+
+    /** D1：写入 Bangumi 用户名（登录成功 / 同步时）。空白忽略。 */
+    suspend fun setBangumiUsername(name: String) {
+        val n = name.trim()
+        if (n.isEmpty()) return
+        dataStore.edit { it[Keys.BANGUMI_USERNAME] = n }
+    }
+
+    /** D1：清除 Bangumi 用户名（清除授权时）。 */
+    suspend fun clearBangumiUsername() {
+        dataStore.edit { it.remove(Keys.BANGUMI_USERNAME) }
+    }
+
+    /** D7：最近浏览过的作品 id（最新在前，最多 12 条），供搜索页空态「最近浏览」展示。 */
+    val recentlyViewedWorkIds: Flow<List<String>> =
+        dataStore.data.map { prefs -> prefs[Keys.RECENTLY_VIEWED].toHistoryList() }
+
+    /** D7：记录一次「点开作品」——去重置顶、截断到 12 条。 */
+    suspend fun addRecentlyViewed(workId: String) {
+        val id = workId.trim()
+        if (id.isEmpty()) return
+        dataStore.edit { prefs ->
+            val next = (listOf(id) + prefs[Keys.RECENTLY_VIEWED].toHistoryList().filterNot { it == id }).take(12)
+            prefs[Keys.RECENTLY_VIEWED] = next.joinToString("\n")
+        }
+    }
+
+    /** #10：把持久化的换行分隔串解析为去空清洗后的历史列表。 */
+    private fun String?.toHistoryList(): List<String> =
+        this?.split('\n')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
 
     /** F11：设置启用的首页模块集合。 */
     suspend fun setHomeModules(keys: Set<String>) {
@@ -271,6 +336,9 @@ class SettingsDataStore @Inject constructor(
         val BACKLOG_GRID_MODE = booleanPreferencesKey("backlog_grid_mode")
         val RECOMMEND_MIN_COMMUNITY_SCORE = floatPreferencesKey("recommend_min_community_score")
         val TASTE_MATCH_THRESHOLD = floatPreferencesKey("taste_match_threshold")
+        val SEARCH_HISTORY = stringPreferencesKey("search_history")
+        val BANGUMI_USERNAME = stringPreferencesKey("bangumi_username")
+        val RECENTLY_VIEWED = stringPreferencesKey("recently_viewed_work_ids")
     }
 }
 

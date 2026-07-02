@@ -31,6 +31,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.foundation.clickable
+import androidx.compose.material3.Checkbox
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import com.acgcompass.core.designsystem.AcgCompassTheme
 
 /**
@@ -49,8 +55,8 @@ fun OnboardingRoute(
 ) {
     OnboardingScreen(
         state = OnboardingUiState.DEFAULT,
-        onConfirm = {
-            viewModel.onOnboardingComplete()
+        onConfirm = { consented ->
+            viewModel.onOnboardingComplete(consentToProxyToken = consented)
             onFinished()
         },
         modifier = modifier,
@@ -65,9 +71,10 @@ fun OnboardingRoute(
 @Composable
 fun OnboardingScreen(
     state: OnboardingUiState,
-    onConfirm: () -> Unit,
+    onConfirm: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var consented by remember { mutableStateOf(false) }
     Scaffold(modifier = modifier.fillMaxSize()) { innerPadding ->
         Column(
             modifier = Modifier
@@ -96,9 +103,25 @@ fun OnboardingScreen(
                 Spacer(Modifier.height(12.dp))
             }
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { consented = !consented }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                Checkbox(checked = consented, onCheckedChange = { consented = it })
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = state.consentPrompt,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.height(16.dp))
             Button(
-                onClick = onConfirm,
+                onClick = { onConfirm(consented) },
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(text = state.confirmLabel)

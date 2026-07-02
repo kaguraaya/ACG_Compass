@@ -148,6 +148,15 @@ fun AppNavHost(
                 onOpenWork = { workId ->
                     navController.navigate(detailRoute(workId))
                 },
+                onOpenExploreQueue = {
+                    navController.navigate(AppDestination.ExploreQueue.route)
+                },
+            )
+        }
+        composable(AppDestination.ExploreQueue.route) {
+            com.acgcompass.feature.explore.ExploreQueueRoute(
+                onOpenWork = { workId -> navController.navigate(detailRoute(workId)) },
+                onBack = { navController.popBackStack() },
             )
         }
         composable(AppDestination.Backlog.route) {
@@ -275,6 +284,12 @@ private fun NavGraphBuilder.nestedRoutes(navController: NavHostController) {
         SettingsSourceScreen(
             sourceKey = entry.arguments?.getString("source").orEmpty(),
             onNavigateBack = { navController.popBackStack() },
+            onBangumiLogin = { navController.navigate(AppDestination.BangumiOAuth.route) },
+        )
+    }
+    composable(AppDestination.BangumiOAuth.route) {
+        com.acgcompass.feature.auth.BangumiOAuthRoute(
+            onBack = { navController.popBackStack() },
         )
     }
     composable(AppDestination.Onboarding.route) {

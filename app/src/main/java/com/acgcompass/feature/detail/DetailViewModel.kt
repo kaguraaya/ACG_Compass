@@ -11,6 +11,7 @@ import com.acgcompass.data.local.dao.UserCollectionDao
 import com.acgcompass.data.local.dao.WorkDao
 import com.acgcompass.data.local.entity.UserCollectionEntity
 import com.acgcompass.data.local.mapper.toEntity
+import com.acgcompass.data.taste.TasteEngine
 import com.acgcompass.domain.ai.AiEngine
 import com.acgcompass.domain.ai.AiRunOptions
 import com.acgcompass.domain.ai.AiRunResult
@@ -25,6 +26,8 @@ import com.acgcompass.domain.repository.BacklogRepository
 import com.acgcompass.domain.repository.BulkOp
 import com.acgcompass.domain.repository.TasteProfileRepository
 import com.acgcompass.domain.repository.WorkRepository
+import com.acgcompass.domain.taste.AdvancedTasteProfile
+import com.acgcompass.domain.taste.TasteMatchResult
 import com.acgcompass.domain.usecase.GenerateSpoilerRadarUseCase
 import com.acgcompass.domain.usecase.RadarOutcome
 import com.acgcompass.domain.usecase.RadarRequest
@@ -68,6 +71,8 @@ class DetailViewModel @Inject constructor(
     private val userCollectionDao: UserCollectionDao,
     private val workDao: WorkDao,
     private val sourceLinkDao: com.acgcompass.data.local.dao.SourceLinkDao,
+    private val tasteEngine: TasteEngine,
+    private val settingsDataStore: com.acgcompass.data.datastore.SettingsDataStore,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -99,7 +104,11 @@ class DetailViewModel @Inject constructor(
      * 失败静默——画像刷新失败绝不影响「我的记录」保存本身。
      */
     private fun refreshTasteProfileFromLocal() {
-        viewModelScope.launch { runCatching { tasteProfileRepository.recomputeFromLocal() } }
+        viewModelScope.launch {
+            runCatching { tasteProfileRepository.recomputeFromLocal() }
+            // 最终版 12 维引擎：用最新本地收藏 + 已缓存特征重建高级画像（不联网，评分后即时反映）。
+            runCatching { tasteEngine.rebuildFromCache() }
+        }
     }
 
     /** E：「AI 分析匹配度」按钮状态（RC.10.03 / RC.14）。初始为 [AiMatchUi.Idle]。 */
@@ -170,6 +179,36 @@ class DetailViewModel @Inject constructor(
                 initialValue = null,
             )
 
+    /**
+     * 最终版 12 维口味引擎对**当前作品**的匹配结果（已校准 + 分数拉开 + 已评分偏置）。
+     * 随作品 / 我的评分 / 口味画像变化重算；引擎不可用（冷启动 / 无特征）时为 `null`，UI 回退旧标签重合估计。
+     */
+    private val advancedTasteMatch: StateFlow<Pair<TasteMatchResult?, AdvancedTasteProfile?>> =
+        combine(
+            workRepository.observeWork(workId),
+            myCollection,
+            tasteEngine.observeProfile(),
+        ) { workState, collection, profile ->
+            val work = (workState as? UiState.Success)?.data
+                ?: (workState as? UiState.PartialMissing)?.data
+            Triple(work, collection?.rating, profile)
+        }.map { (work, rating, profile) ->
+            // A1：12 维引擎为主路径；同时透出当时画像，供四态判定（A2）。
+            val match = if (work == null) {
+                null
+            } else {
+                runCatching {
+                    val sid = resolveBangumiSubjectId(work)?.toString() ?: work.id
+                    tasteEngine.score(sid, rating, allowNetwork = true)
+                }.getOrNull()
+            }
+            match to profile
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS),
+            initialValue = null to null,
+        )
+
     /** 最近一次就绪的作品，供 [onToggleBacklog] 加入待补池时使用（addAll 需要 [Work]）。 */
     @Volatile
     private var currentWork: Work? = null
@@ -185,17 +224,19 @@ class DetailViewModel @Inject constructor(
             workRepository.observeWork(workId),
             ratings,
             combine(backlogMembership, myCollection) { membership, collection -> membership to collection },
-            tasteProfile,
+            combine(tasteProfile, advancedTasteMatch) { profile, adv -> profile to adv },
             combine(radar, detailExtras, workEnsured) { r, e, ensured -> Triple(r, e, ensured) },
-        ) { workState, ratingAggregate, personal, profile, radarExtrasEnsured ->
+        ) { workState, ratingAggregate, personal, profileAndAdv, radarExtrasEnsured ->
             workState.toDetailState(
                 ratingAggregate,
                 personal.first,
                 personal.second,
-                profile,
+                profileAndAdv.first,
                 radarExtrasEnsured.first,
                 radarExtrasEnsured.second,
                 radarExtrasEnsured.third,
+                profileAndAdv.second.first,
+                profileAndAdv.second.second,
             )
         }.stateIn(
             scope = viewModelScope,
@@ -206,6 +247,11 @@ class DetailViewModel @Inject constructor(
     init {
         ensureWorkLoaded()
         loadRatings()
+        // D7：打开详情即记录「最近浏览」，供发现-搜索页空态展示「上次点开的条目」。
+        if (workId.isNotBlank()) viewModelScope.launch { runCatching { settingsDataStore.addRecentlyViewed(workId) } }
+        // 冷启动：保障画像就绪——先用已缓存特征不联网重建；仍不可用且确有评分作品时每进程一次性联网补齐
+        // work_features（治存量用户画像恒空 → 匹配度恒「暂无可匹配标签」）。后台进行，不阻塞 UI。
+        viewModelScope.launch { runCatching { tasteEngine.ensureReady() } }
     }
 
     /**
@@ -417,15 +463,17 @@ class DetailViewModel @Inject constructor(
         radarResult: SpoilerRadarResult?,
         extras: DetailExtras,
         workEnsured: Boolean,
+        advancedMatch: TasteMatchResult?,
+        advancedProfile: AdvancedTasteProfile?,
     ): UiState<DetailUiState> = when (this) {
         is UiState.Success -> {
             currentWork = data
-            UiState.Success(buildDetailUiState(data, ratingAggregate, membership.inBacklog, collectionState, tasteProfile = profile, radar = radarResult, inDustMuseum = membership.inDustMuseum, extras = extras))
+            UiState.Success(buildDetailUiState(data, ratingAggregate, membership.inBacklog, collectionState, tasteProfile = profile, radar = radarResult, inDustMuseum = membership.inDustMuseum, extras = extras, advancedMatch = advancedMatch, advancedProfile = advancedProfile))
         }
         // 作品字段缺失：仍渲染详情，缺失字段在 UI 内显示「暂无数据」（RC.07.03）。
         is UiState.PartialMissing -> {
             currentWork = data
-            UiState.PartialMissing(buildDetailUiState(data, ratingAggregate, membership.inBacklog, collectionState, tasteProfile = profile, radar = radarResult, inDustMuseum = membership.inDustMuseum, extras = extras))
+            UiState.PartialMissing(buildDetailUiState(data, ratingAggregate, membership.inBacklog, collectionState, tasteProfile = profile, radar = radarResult, inDustMuseum = membership.inDustMuseum, extras = extras, advancedMatch = advancedMatch, advancedProfile = advancedProfile))
         }
         is UiState.Loading -> UiState.Loading
         // I12：作品尚未确保加载完成（可能正在联网补全）时，把空态视为加载中，避免跳转闪现「暂无内容」。
@@ -763,18 +811,20 @@ class DetailViewModel @Inject constructor(
             )
             // B-1：保存评分 / 评价 / 状态后用最新本地收藏重算口味画像。
             refreshTasteProfileFromLocal()
+            // 口味画像随评分变化自动重算——给出可见提示（仅在本次确有评分时；状态/进度变更不影响画像）。
+            val tasteNote = if (rating != null) "；口味画像已自动更新" else ""
 
             if (subjectId == null) {
-                _recordMessage.value = "已本地保存（该作品在 Bangumi 无对应词条，仅本地，不同步）"
+                _recordMessage.value = "已本地保存（该作品在 Bangumi 无对应词条，仅本地，不同步）$tasteNote"
                 return@launch
             }
             if (!configured) {
-                _recordMessage.value = "已本地保存；未配置 Bangumi Token，未同步到云端"
+                _recordMessage.value = "已本地保存；未配置 Bangumi Token，未同步到云端$tasteNote"
                 return@launch
             }
             // M6：写回前确认条目在 Bangumi 存在，避免对无词条作品反复 PATCH/POST 报错。
             if (!bangumiDataSource.subjectExists(subjectId)) {
-                _recordMessage.value = "已本地保存；该作品在 Bangumi 无词条，无法同步到云端"
+                _recordMessage.value = "已本地保存；该作品在 Bangumi 无词条，无法同步到云端$tasteNote"
                 return@launch
             }
             val result = bangumiDataSource.updateUserCollection(
@@ -803,7 +853,7 @@ class DetailViewModel @Inject constructor(
                         is AppResult.Failure -> "（进度同步失败：${progressResult.error.cause}）"
                         else -> ""
                     }
-                    "已保存并同步到 Bangumi$progressNote"
+                    "已保存并同步到 Bangumi$progressNote$tasteNote"
                 }
                 is AppResult.Failure -> "本地已保存，同步 Bangumi 失败：${result.error.cause}（${result.error.nextStep}）"
             }

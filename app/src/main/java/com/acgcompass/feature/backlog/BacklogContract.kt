@@ -4,6 +4,7 @@ import com.acgcompass.core.designsystem.WorkCardUiModel
 import com.acgcompass.domain.model.BacklogItem
 import com.acgcompass.domain.model.CompletionCost
 import com.acgcompass.domain.model.MediaType
+import com.acgcompass.domain.model.displayTitle
 import com.acgcompass.domain.model.Priority
 import com.acgcompass.domain.model.SourceId
 import com.acgcompass.domain.model.Work
@@ -22,6 +23,16 @@ data class BacklogCardItem(
 ) {
     val workId: String get() = item.workId
 }
+
+/**
+ * D5：一键抽番结果的 UI 展示模型（RC.08.06）。携带**作品名** [title]（而非只有 [workId]），
+ * 修复弹窗只显示作品 id 数字的问题；作品尚未本地化时 [title] 为 `null`，回退展示 [workId]。
+ */
+data class DrawUiResult(
+    val workId: String?,
+    val title: String?,
+    val reason: String,
+)
 
 /** 待补池排序的可读标签（RC.08.02）。 */
 fun BacklogSort.label(): String = when (this) {
@@ -96,7 +107,7 @@ fun BacklogCardItem.toWorkCardUiModel(): WorkCardUiModel {
     }
     return WorkCardUiModel(
         coverUrl = w?.coverUrl,
-        title = w?.titles?.canonical ?: item.workId,
+        title = w?.displayTitle() ?: item.workId,
         subtitle = subtitle,
         type = w?.mediaType?.label() ?: "暂无数据",
         // 评分聚合在后续任务接入；此处恒为 null → 卡片显示「暂无数据」，绝不伪造分值。

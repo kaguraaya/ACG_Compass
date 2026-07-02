@@ -15,6 +15,9 @@ import com.acgcompass.domain.model.TagCategory
 import com.acgcompass.domain.model.TasteProfile
 import com.acgcompass.domain.model.Units
 import com.acgcompass.domain.model.Work
+import com.acgcompass.domain.taste.AdvancedTasteProfile
+import com.acgcompass.domain.taste.TasteCategory
+import com.acgcompass.domain.taste.TasteMatchResult
 import com.acgcompass.domain.usecase.AggregateRatingsUseCase
 import com.acgcompass.domain.usecase.PersonalTasteScorer
 import com.acgcompass.domain.usecase.TasteScore
@@ -359,9 +362,11 @@ fun buildDetailUiState(
     radar: SpoilerRadarResult? = null,
     inDustMuseum: Boolean = false,
     extras: DetailExtras = DetailExtras(),
+    advancedMatch: TasteMatchResult? = null,
+    advancedProfile: AdvancedTasteProfile? = null,
 ): DetailUiState {
     val consensus = ratings?.consensus.toConsensusUiModel()
-    val tasteMatch = work.toTasteMatch(tasteProfile, ratings)
+    val tasteMatch = work.toTasteMatch(advancedMatch, advancedProfile)
     val completionCost = work.toCompletionCostUiModel()
     // N16：是否 Bangumi 关联——主源为 Bangumi 或聚合中存在 Bangumi 评分。否则我的记录不可编辑/同步。
     val bangumiBacked = work.primarySource == SourceId.BANGUMI ||
@@ -766,52 +771,59 @@ private fun SpoilerRadarResult?.toRadarSummary(): String {
 private val personalTasteScorer = PersonalTasteScorer()
 
 /**
+ * 最终版 12 维口味引擎结果 → 详情页可渲染模型。分数已是 5–95 的拉开后匹配度；定性按分段；理由取贡献最大的
+ * 几个大类标签；低置信（样本少）与已评分时补充说明（绝不伪造，RC.10.03）。
+ */
+private fun TasteMatchResult.toTasteMatchUi(): TasteMatchUiModel {
+    val fraction = (score / 100f).coerceIn(0f, 1f)
+    val qualitative = when {
+        score >= 80 -> "很可能合你的胃口"
+        score >= 65 -> "可能会喜欢"
+        score >= 45 -> "可能感觉一般"
+        else -> "可能不太喜欢"
+    }
+    val lowConf = confidence < 0.4
+    // A3：算法用全 12 维（含声优/staff/XP），但前端理由只呈现题材类（题材/组合/情节），避免太乱。
+    val topicReasons = reasons.filter {
+        it.category == TasteCategory.TOPIC || it.category == TasteCategory.COMBO || it.category == TasteCategory.DEVICE
+    }.ifEmpty { reasons }
+    val reasonCore = if (topicReasons.isNotEmpty()) {
+        "主要依据你的长期口味：命中「${topicReasons.take(3).joinToString("、") { it.label }}」"
+    } else {
+        "与你的口味画像重合较少，仅供参考"
+    }
+    val ratedNote = if (isRated) "；你给这部评过分，已据此校准" else ""
+    val confNote = if (lowConf) "。注意：口味画像样本较少，置信度偏低，仅供参考" else ""
+    return TasteMatchUiModel.Available(
+        percentText = "$score%",
+        qualitativeText = if (lowConf) "$qualitative（低置信）" else qualitative,
+        fraction = fraction,
+        reason = "$reasonCore$ratedNote$confNote",
+    )
+}
+
+/**
  * 口味匹配度（RC.07.05 / RC.10.03）：委托共享 [PersonalTasteScorer]，与推荐器同一口径。
  * 以作品标签与口味画像高/低分标签的**加权重合**为主导（题材标签全权重、年份/厂商等元数据弱化），
  * 社区评分仅作轻量先验（较此前再降权）。无画像 / 数据不足时返回 [TasteMatchUiModel.Unavailable]（不伪造）。
  */
-private fun Work.toTasteMatch(tasteProfile: TasteProfile?, ratings: RatingAggregate? = null): TasteMatchUiModel {
-    val community10 = ratings.representativeScore10()
-    val score = personalTasteScorer.score(this, tasteProfile, community10)
-    when (score.basis) {
-        TasteScore.Basis.NO_PROFILE ->
-            return TasteMatchUiModel.Unavailable("尚未生成口味画像，先在「我的 → 口味画像」从 Bangumi 同步生成")
-        TasteScore.Basis.INSUFFICIENT ->
-            return TasteMatchUiModel.Unavailable(
-                "该作品暂无标签与社区评分，数据不足，无法计算口味匹配度（口味画像已生成）",
-            )
-        else -> Unit
+private fun Work.toTasteMatch(
+    advancedMatch: TasteMatchResult?,
+    advancedProfile: AdvancedTasteProfile?,
+): TasteMatchUiModel {
+    // A1：12 维引擎为详情页主路径（已校准 + 分数拉开 + 已评分偏置 + 全维度标签）。
+    advancedMatch?.let { return it.toTasteMatchUi() }
+    // A2：引擎无结果时按四态区分原因（弃用旧版只看题材的回退，不再笼统「暂无可匹配标签」）：
+    return when {
+        advancedProfile == null ->
+            TasteMatchUiModel.Unavailable("口味画像尚未就绪：请在「我的 → 口味画像」从 Bangumi 同步评分，或稍候自动构建")
+        !advancedProfile.isUsable ->
+            TasteMatchUiModel.Unavailable("口味样本不足：多给几部作品评分后，匹配会更准")
+        tags.isEmpty() ->
+            TasteMatchUiModel.Unavailable("该作品暂无可用标签（已排除噪声），暂无法计算口味匹配")
+        else ->
+            TasteMatchUiModel.Unavailable("该作品特征同步中，请稍候自动完成")
     }
-
-    val fraction = score.fraction
-    val qualitative = when {
-        fraction >= 0.7f -> "很可能合你的胃口"
-        fraction >= 0.55f -> "可能会喜欢"
-        fraction >= 0.4f -> "可能感觉一般"
-        else -> "可能不太喜欢"
-    }
-    // 可解释：优先用「命中的高/低分标签」（长期口味）说明；无标签退化时用社区相对分补一句。
-    val baseReason = when {
-        score.matchedHighTags.isNotEmpty() ->
-            "主要依据你的长期口味：命中你高分作品常见标签「${score.matchedHighTags.take(3).joinToString("、")}」" +
-                (if (score.matchedLowTags.isNotEmpty()) "，但也含低分标签「${score.matchedLowTags.take(2).joinToString("、")}」" else "")
-        score.matchedLowTags.isNotEmpty() ->
-            "含 ${score.matchedLowTags.size} 个你低分作品常见的标签「${score.matchedLowTags.take(3).joinToString("、")}」，可能不太合胃口（负信号已加权）"
-        score.basis == TasteScore.Basis.COMMUNITY_FALLBACK && community10 != null ->
-            "该作品暂无可匹配标签，参考社区评分 %.1f/10 相对你的口味粗估（仅辅助）".format(community10)
-        else -> "与你的口味画像重合较少，仅供参考"
-    }
-    val reason = if (score.lowConfidence) {
-        "$baseReason。注意：你的口味画像样本较少，置信度低，以上仅供参考"
-    } else {
-        baseReason
-    }
-    return TasteMatchUiModel.Available(
-        percentText = "${(fraction * 100).roundToInt()}%",
-        qualitativeText = if (score.lowConfidence) "$qualitative（低置信）" else qualitative,
-        fraction = fraction,
-        reason = reason,
-    )
 }
 
 /** 取各源有效评分归一化到 10 分制后的平均值；无任一有效源返回 null。 */

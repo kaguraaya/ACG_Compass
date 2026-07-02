@@ -436,8 +436,48 @@ class WorkRepositoryImpl @Inject constructor(
                     entry.toEntity(id = ratingId(workId, source), workId = workId, sourceId = source),
                 )
             }
+            // #8：候选池补齐——基础榜单写入后，本地作品不足目标规模则继续分页拉 Bangumi 真实排行补齐
+            //（rankedOverall 上面已拉 0..2 页，故从第 3 页续拉）。已达标则仅一次 count 开销后跳过。
+            written += backfillCacheToTarget(startPage = 3)
             written
         }
+    }
+
+    /**
+     * #8：把本地作品候选池补齐到目标规模（默认 1000）。从 Bangumi 真实排行（`sort=rank`，高分优先）的
+     * [startPage] 续拉，每页落库后重新计数；达标 / 分页到底 / 触顶页数即停。返回本次新写入条数。
+     * 任一页失败（含限流）静默跳出，不阻塞启动；下次进首页仍不足会继续渐进补齐（RC.17.4）。
+     */
+    private suspend fun backfillCacheToTarget(startPage: Int): Int {
+        val targetSize = 1000
+        val pageSize = 50
+        val maxPage = 30 // 防御上限：最多拉到第 30 页（~1500），避免异常情况下持续拉取。
+        var written = 0
+        var page = startPage
+        var total = workDao.count()
+        while (total < targetSize && page < maxPage) {
+            val items = (
+                bangumi.searchRankedSubjects(limit = pageSize, offset = page * pageSize)
+                    as? AppResult.Success
+                )?.data?.items.orEmpty()
+            if (items.isEmpty()) break
+            persistMatches(items.map { it.first })
+            items.forEach { (match, entry) ->
+                if (entry != null) {
+                    ratingDao.upsert(
+                        entry.toEntity(
+                            id = ratingId(match.work.id, SourceId.BANGUMI),
+                            workId = match.work.id,
+                            sourceId = SourceId.BANGUMI,
+                        ),
+                    )
+                }
+            }
+            written += items.size
+            total = workDao.count()
+            page++
+        }
+        return written
     }
 
     /** L2b：当前季度的开播日期范围过滤（用于本季榜单 `sort=rank` 浏览）。 */
@@ -541,13 +581,17 @@ class WorkRepositoryImpl @Inject constructor(
                 }
             }
         }
+        val primarySource = workDao.getById(workId)?.let { sourceIdFromName(it.primarySource) }
         val links = sourceLinkDao.getByWork(workId)
-        // 无显式链接时，按「Bangumi 来源作品本地 id 即条目 id」兜底尝试主源评分。
-        val pairs: List<Pair<SourceId, String>> = if (links.isEmpty()) {
-            val primary = workDao.getById(workId)?.let { sourceIdFromName(it.primarySource) }
-            if (primary != null) listOf(primary to workId) else emptyList()
-        } else {
+        // #4 修复（治存量 + 防御）：主源评分**锚定作品自身条目**（workId 即主源 item id），剔除被误合并到
+        // 本簇的同源他条目——典型：续作「第2期」曾被并入正片，其评分链接挂到正片 → 覆盖正片真实评分。
+        // 每个非主源仅保留一条链接（跨源对照足够）。无任何链接时仅按「主源 + workId」兜底。
+        val pairs: List<Pair<SourceId, String>> = buildList {
+            if (primarySource != null) add(primarySource to workId)
             links.mapNotNull { l -> sourceIdFromName(l.sourceId)?.let { it to l.sourceItemId } }
+                .filter { it.first != primarySource }
+                .groupBy { it.first }
+                .forEach { (sid, list) -> add(sid to list.first().second) }
         }
 
         for ((sid, itemId) in pairs) {
@@ -559,8 +603,10 @@ class WorkRepositoryImpl @Inject constructor(
             }
         }
 
-        // H16：多源评分交叉验证（mzzbscore 思路）——对尚无评分的公共源，按作品标题跨平台搜索匹配，
-        // 命中（高置信）则把对方平台评分并入本作品，使详情页 / 评分差异能做多源对照。失败被吞掉（韧性）。
+        // N12：单源作品（典型：「智能选择主线」跳转的 Bangumi 关联条目 / 续作）跨源补齐——先用与搜索页
+        // 一致的「多源搜索 + 季度感知聚类」把同簇其他源评分挂到本 workId（续作 / 跨语言更稳，且避免误并邻季）。
+        enrichViaCrossSourceSearch(workId)
+        // H16：多源评分交叉验证兜底——对聚类仍未覆盖的公共源，按作品标题逐源搜索匹配补齐。失败被吞掉（韧性）。
         crossValidateRatings(workId)
 
         // 主源刷新作品资料（补齐封面 / 集数 / 简介等字段），保留 createdAt（不覆盖创建时间）。
@@ -725,6 +771,78 @@ class WorkRepositoryImpl @Inject constructor(
             }
         }
     }
+    /**
+     * N12：单源作品跨源补齐（多源搜索 + 季度感知聚类）——修复「智能选择主线」跳转的 Bangumi 关联条目
+     * 详情页只显示 Bangumi 评分、其他源（AniList / MAL·Jikan）评分不出的问题。
+     *
+     * 与 [crossValidateRatings]（逐源按**绝对相似度阈值**匹配、续作 / 跨语言标题易漏配）不同，本法复用搜索页
+     * 的 [com.acgcompass.domain.matching.clusterMatches]（[com.acgcompass.domain.matching.sameWork] 季度感知、
+     * 跨标题变体相似、支持核心包含）：把本作作为锚点与多源搜索结果聚类，仅把**与本作同簇**的其他源链接与评分
+     * 挂到本 [workId]。仅动画、已有 ≥2 源即跳过（省请求）；全程 best-effort，任何失败吞掉（RC.01 3.7 / RC.17.4）。
+     */
+    private suspend fun enrichViaCrossSourceSearch(workId: String) {
+        val entity = workDao.getById(workId) ?: return
+        if (com.acgcompass.domain.model.MediaType.fromStorage(entity.mediaType) !=
+            com.acgcompass.domain.model.MediaType.ANIME
+        ) return
+        val existingSources = ratingDao.getByWork(workId).map { it.sourceId }.toSet()
+        if (existingSources.size >= 2) return // 已有多源对照，无需补齐。
+
+        val self = entity.toDomain()
+        val primary = sourceIdFromName(entity.primarySource) ?: SourceId.BANGUMI
+        // 用作品全部标题变体（原名 ja 优先 + 罗马音 + 规范名 + 英文 + 别名）跨源搜索，跨语言更易命中。
+        val queries = (
+            listOfNotNull(self.titles.ja, self.titles.romaji, self.titles.canonical, self.titles.en) +
+                self.titles.aliases
+            ).map { it.trim() }.filter { it.isNotBlank() }.distinct().take(3)
+        if (queries.isEmpty()) return
+
+        // 多源并行搜索（与 search() 同源集：AniList / Jikan / MAL(配置后)），各源失败互不影响（容错）。
+        val fresh: List<WorkMatch> = coroutineScope {
+            queries.flatMap { q ->
+                listOf(
+                    async { safeSearch { anilist.searchMedia(keyword = q) } },
+                    async { safeSearch { jikan.searchAnime(keyword = q) } },
+                    async { if (mal.isEnabled()) safeSearch { mal.searchAnime(keyword = q) } else emptyList() },
+                )
+            }.flatMap { it.await() }
+        }
+        if (fresh.isEmpty()) return
+
+        // 以本作为锚点参与聚类（matchConfidence=1f 确保先建簇），取「与本作同簇」的其他源候选。
+        val anchor = WorkMatch(work = self, matchConfidence = 1f, sourceTag = primary, popularity = Int.MAX_VALUE)
+        val cluster = com.acgcompass.domain.matching.clusterMatches(listOf(anchor) + fresh)
+            .firstOrNull { c -> c.any { it.work.id == self.id && it.sourceTag == primary } }
+            ?: return
+        val now = System.currentTimeMillis()
+        cluster
+            .filter { it.sourceTag != primary && it.sourceTag.name !in existingSources }
+            .filter { it.work.mediaType == com.acgcompass.domain.model.MediaType.ANIME }
+            .groupBy { it.sourceTag }
+            .forEach { (sid, list) ->
+                // 每源取簇内评分人数最多者（正片优先），拉取该源评分并挂到本 workId。
+                val bestOfSource = list.maxByOrNull { it.popularity } ?: return@forEach
+                val rating = fetchSourceRating(sid, bestOfSource.work.id)
+                if (rating is AppResult.Success) {
+                    ratingDao.upsert(
+                        rating.data.toEntity(id = ratingId(workId, sid), workId = workId, sourceId = sid),
+                    )
+                    sourceLinkDao.upsert(
+                        SourceRef(
+                            sourceId = sid,
+                            sourceItemId = bestOfSource.work.id,
+                            matchConfidence = bestOfSource.matchConfidence,
+                            userOverridden = false,
+                        ).toEntity(
+                            id = linkId(workId, sid, bestOfSource.work.id),
+                            workId = workId,
+                            linkedAt = now,
+                        ),
+                    )
+                }
+            }
+    }
+
     private fun candidateTitles(match: WorkMatch): List<String> = buildList {
         add(match.work.titles.canonical)
         match.work.titles.ja?.let(::add)

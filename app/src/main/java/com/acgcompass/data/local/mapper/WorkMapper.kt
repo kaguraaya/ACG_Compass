@@ -34,6 +34,7 @@ fun WorkEntity.toDomain(tags: List<Tag> = emptyList()): Work =
         id = id,
         titles = Titles(
             canonical = canonicalTitle,
+            cn = titleCn,
             ja = titleJa,
             romaji = titleRomaji,
             en = titleEn,
@@ -70,6 +71,7 @@ fun Work.toEntity(
         titleJa = titles.ja,
         titleRomaji = titles.romaji,
         titleEn = titles.en,
+        titleCn = titles.cn,
         aliases = titles.aliases,
         mediaType = mediaType.name,
         year = year,

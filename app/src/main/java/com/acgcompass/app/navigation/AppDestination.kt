@@ -117,6 +117,16 @@ sealed interface AppDestination {
         override val route: String = "settings_source?source={source}"
     }
 
+    /** RC.02 4.6：Bangumi OAuth2 授权登录页（内嵌 WebView）。从设置 → Bangumi 的「用 Bangumi 登录」进入。 */
+    data object BangumiOAuth : AppDestination {
+        override val route: String = "bangumi_oauth"
+    }
+
+    /** C 轮：探索队列（发现页右上角进入）。主动探索「可能喜欢、但还没接触」的新作品。 */
+    data object ExploreQueue : AppDestination {
+        override val route: String = com.acgcompass.feature.explore.EXPLORE_QUEUE_ROUTE
+    }
+
     // endregion
 }
 

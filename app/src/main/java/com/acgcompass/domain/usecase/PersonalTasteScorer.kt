@@ -67,13 +67,14 @@ class PersonalTasteScorer @Inject constructor() {
         // 高/低分偏好权重表：tag(小写) → 权重 = ln(1+标注次数) × 题材/元数据因子。
         val highWeights = profile.tagStats
             .filter { it.bucket == TagBucket.HIGH_SCORE }
-            .associate { it.tagName.lowercase() to weightOf(it.tagName, it.count) }
+            .associate { cleanLower(it.tagName) to weightOf(it.tagName, it.count) }
         val lowWeights = profile.tagStats
             .filter { it.bucket == TagBucket.LOW_SCORE }
-            .associate { it.tagName.lowercase() to weightOf(it.tagName, it.count) }
+            .associate { cleanLower(it.tagName) to weightOf(it.tagName, it.count) }
 
         val workTagNames = work.tags.map { it.name }
-        val workTagsLower = workTagNames.map { it.lowercase() }
+        // C 轮：清洗 + 小写后再比较，避免下划线/连字符/空白/大小写差异导致「喜欢的番明明有重合标签却匹配不上」。
+        val workTagsLower = workTagNames.map { cleanLower(it) }
 
         // 退化：作品无标签 或 画像无高/低分标签 → 用社区分相对你均分粗估。
         if (workTagsLower.isEmpty() || (highWeights.isEmpty() && lowWeights.isEmpty())) {
@@ -93,8 +94,9 @@ class PersonalTasteScorer @Inject constructor() {
         // 软饱和聚合：少数强命中即可拿高分，避免被「标签多」的作品线性稀释（总体吻合度）。
         val coverage = posSum / (posSum + SATURATION_K)
         val negRatio = negSum / (negSum + SATURATION_K)
-        // 纯个人口味分量（题材重合，不含社区）：基线 0.35，正命中拉升，负命中下压。
-        val personal = (0.35f + 0.63f * coverage - 0.55f * negRatio).coerceIn(0.02f, 1f)
+        // 纯个人口味分量（题材重合，不含社区）。C 轮：降基线 0.35→0.28、加大增益，配合更小的
+        // [SATURATION_K] 与下方对比度扩展，使「喜欢的高分番」明显拉高、口味不合的明显拉低。
+        val personal = (0.28f + 0.74f * coverage - 0.62f * negRatio).coerceIn(0.02f, 1f)
 
         // 社区分 → 「相对你均分」的习惯调整（很低权重并入综合分）。
         val communityNorm = communityScore10?.let { (it / 10f).coerceIn(0f, 1f) }
@@ -105,12 +107,15 @@ class PersonalTasteScorer @Inject constructor() {
             0f
         }
 
-        // 综合匹配度：个人口味主导（0.84），社区分仅辅助（0.08，较此前 0.15 再降），习惯 0.08。
+        // 综合匹配度：个人口味更加主导（0.88），社区分 / 习惯各 0.06（进一步弱化社区分，用户诉求）。
         var fraction = if (communityNorm != null) {
-            (personal * 0.84f + communityNorm * 0.08f + (0.5f + habitAdj) * 0.08f).coerceIn(0.05f, 0.98f)
+            (personal * 0.88f + communityNorm * 0.06f + (0.5f + habitAdj) * 0.06f).coerceIn(0.02f, 0.99f)
         } else {
-            (personal * 0.94f + 0.04f).coerceIn(0.05f, 0.98f)
+            (personal * 0.96f + 0.02f).coerceIn(0.02f, 0.99f)
         }
+
+        // C 轮对比度扩展：以中性 0.5 为轴把分数两侧拉开，直接治「评分都差不多」（用户诉求）。
+        fraction = (0.5f + (fraction - 0.5f) * CONTRAST).coerceIn(0.02f, 0.99f)
 
         val lowConf = profile.confidence.coerceIn(0f, 1f) < LOW_CONFIDENCE_THRESHOLD
         if (lowConf) fraction = (0.5f + (fraction - 0.5f) * 0.6f).coerceIn(0.05f, 0.98f)
@@ -152,9 +157,16 @@ class PersonalTasteScorer @Inject constructor() {
     private fun weightOf(tag: String, count: Int): Float =
         ln(1.0 + count.coerceAtLeast(0)).toFloat() * TasteTagTaxonomy.weightFactor(tag)
 
+    /** 标签清洗 + 小写：忽略下划线/连字符/空白/大小写差异，保证画像标签与作品标签可靠匹配（C 轮）。 */
+    private fun cleanLower(raw: String): String =
+        raw.replace('_', ' ').replace('-', ' ').trim().replace(Regex("\\s+"), " ").lowercase()
+
     companion object {
-        /** 软饱和常数：越小越易因少量命中拉高分。 */
-        const val SATURATION_K: Float = 1.5f
+        /** 软饱和常数：越小越易因少量命中拉高分。C 轮 1.5→1.0，使「命中几个喜欢的题材」即明显拉高。 */
+        const val SATURATION_K: Float = 1.0f
+
+        /** C 轮：对比度扩展系数（>1 拉开分数差距）。解决「匹配度都差不多」：高匹配更高、低匹配更低。 */
+        const val CONTRAST: Float = 1.35f
 
         /** 画像置信低于此值视为低置信，分数向中性收缩。 */
         const val LOW_CONFIDENCE_THRESHOLD: Float = 0.3f

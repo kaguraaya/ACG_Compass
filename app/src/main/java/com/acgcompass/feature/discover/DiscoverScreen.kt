@@ -3,6 +3,8 @@ package com.acgcompass.feature.discover
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -10,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -77,6 +80,7 @@ import com.acgcompass.core.ui.UiState
 @Composable
 fun DiscoverRoute(
     onOpenWork: (String) -> Unit,
+    onOpenExploreQueue: () -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: DiscoverViewModel = hiltViewModel(),
 ) {
@@ -94,10 +98,14 @@ fun DiscoverRoute(
     val scopedRanking by viewModel.scopedRanking.collectAsStateWithLifecycle()
     val rankingLoadingMore by viewModel.rankingLoadingMore.collectAsStateWithLifecycle()
     val rankingCanLoadMore by viewModel.rankingCanLoadMore.collectAsStateWithLifecycle()
+    val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
+    val recentlyViewed by viewModel.recentlyViewedWorks.collectAsStateWithLifecycle()
 
     DiscoverScreen(
         state = state,
         query = query,
+        searchHistory = searchHistory,
+        recentlyViewed = recentlyViewed,
         tab = tab,
         rankingBoards = rankingBoards,
         scoreDiffItems = scoreDiffItems,
@@ -115,8 +123,13 @@ fun DiscoverRoute(
         onLoadMoreRanking = viewModel::onLoadMoreRanking,
         onLoadPool = viewModel::loadPublicPool,
         onQueryChange = viewModel::onQueryChange,
+        onSearchSubmit = viewModel::onSearchSubmit,
+        onSelectHistory = viewModel::onSelectHistory,
+        onRemoveHistory = viewModel::onRemoveHistory,
+        onClearHistory = viewModel::onClearHistory,
         onRetry = viewModel::onRetry,
         onOpenWork = onOpenWork,
+        onOpenExploreQueue = onOpenExploreQueue,
         onOverrideMatch = viewModel::onOverrideMatch,
         onTabSelect = viewModel::onTabSelect,
         onFilterChange = viewModel::onFilterChange,
@@ -139,6 +152,8 @@ fun DiscoverRoute(
 fun DiscoverScreen(
     state: UiState<List<DiscoverResultItem>>,
     query: String,
+    searchHistory: List<String>,
+    recentlyViewed: List<RankedWork> = emptyList(),
     tab: DiscoverTab,
     rankingBoards: List<RankingBoard>,
     scoreDiffItems: List<ScoreDiffItem>,
@@ -156,8 +171,13 @@ fun DiscoverScreen(
     onLoadMoreRanking: () -> Unit,
     onLoadPool: () -> Unit,
     onQueryChange: (String) -> Unit,
+    onSearchSubmit: () -> Unit,
+    onSelectHistory: (String) -> Unit,
+    onRemoveHistory: (String) -> Unit,
+    onClearHistory: () -> Unit,
     onRetry: () -> Unit,
     onOpenWork: (String) -> Unit,
+    onOpenExploreQueue: () -> Unit = {},
     onOverrideMatch: (String, com.acgcompass.domain.model.SourceRef) -> Unit,
     onTabSelect: (DiscoverTab) -> Unit,
     onFilterChange: (DiscoverFilter) -> Unit,
@@ -167,7 +187,17 @@ fun DiscoverScreen(
     Scaffold(
         modifier = modifier.fillMaxSize(),
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
-        topBar = { AcgTopLevelTopBar(title = "发现") },
+        topBar = {
+            AcgTopLevelTopBar(
+                title = "发现",
+                actions = {
+                    // C 轮：探索队列入口（主动探索「可能喜欢但还没接触」的新作品）。
+                    androidx.compose.material3.TextButton(onClick = onOpenExploreQueue) {
+                        androidx.compose.material3.Text("探索")
+                    }
+                },
+            )
+        },
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -180,7 +210,13 @@ fun DiscoverScreen(
                 DiscoverTab.SEARCH -> SearchSection(
                     state = state,
                     query = query,
+                    searchHistory = searchHistory,
+                    recentlyViewed = recentlyViewed,
                     onQueryChange = onQueryChange,
+                    onSearchSubmit = onSearchSubmit,
+                    onSelectHistory = onSelectHistory,
+                    onRemoveHistory = onRemoveHistory,
+                    onClearHistory = onClearHistory,
                     onRetry = onRetry,
                     onOpenWork = onOpenWork,
                     onOverrideMatch = onOverrideMatch,
@@ -245,38 +281,82 @@ private fun DiscoverTabRow(
 private fun SearchSection(
     state: UiState<List<DiscoverResultItem>>,
     query: String,
+    searchHistory: List<String>,
+    recentlyViewed: List<RankedWork>,
     onQueryChange: (String) -> Unit,
+    onSearchSubmit: () -> Unit,
+    onSelectHistory: (String) -> Unit,
+    onRemoveHistory: (String) -> Unit,
+    onClearHistory: () -> Unit,
     onRetry: () -> Unit,
     onOpenWork: (String) -> Unit,
     onOverrideMatch: (String, com.acgcompass.domain.model.SourceRef) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
-        SearchBar(query = query, onQueryChange = onQueryChange)
+        SearchBar(query = query, onQueryChange = onQueryChange, onSearchSubmit = onSearchSubmit)
 
-        // J12：移除「管理匹配」按钮（已无用）；多源合并已自动完成，低置信由提示卡引导。
-        StateScaffold(
-            state = state,
-            modifier = Modifier.fillMaxSize(),
-            onRetry = onRetry,
-            // 空态 CTA：把焦点引导回搜索框（行为由界面消化，无需导航）。
-            onCta = {},
-        ) { results ->
-            ResultList(
-                results = results,
-                manageMode = false,
-                onOpenWork = onOpenWork,
-                onOverrideMatch = onOverrideMatch,
-            )
+        // D7/#10：查询为空 → 展示「最近浏览」作品（上次点开的条目）+ 「历史搜索」；否则照常渲染搜索状态。
+        if (query.isBlank() && (recentlyViewed.isNotEmpty() || searchHistory.isNotEmpty())) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = ScreenContentPadding.Horizontal,
+                    end = ScreenContentPadding.Horizontal,
+                    top = ScreenContentPadding.UnderBarTop,
+                    bottom = ScreenContentPadding.Bottom,
+                ),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (recentlyViewed.isNotEmpty()) {
+                    item {
+                        Text(
+                            text = "最近浏览",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                    items(recentlyViewed, key = { "recent_${it.workId}" }) { rw ->
+                        WorkCard(model = rw.card, onClick = { onOpenWork(rw.workId) })
+                    }
+                }
+                if (searchHistory.isNotEmpty()) {
+                    item {
+                        SearchHistorySection(
+                            history = searchHistory,
+                            onSelectHistory = onSelectHistory,
+                            onRemoveHistory = onRemoveHistory,
+                            onClearHistory = onClearHistory,
+                        )
+                    }
+                }
+            }
+        } else {
+            // J12：移除「管理匹配」按钮（已无用）；多源合并已自动完成，低置信由提示卡引导。
+            StateScaffold(
+                state = state,
+                modifier = Modifier.fillMaxSize(),
+                onRetry = onRetry,
+                // 空态 CTA：把焦点引导回搜索框（行为由界面消化，无需导航）。
+                onCta = {},
+            ) { results ->
+                ResultList(
+                    results = results,
+                    manageMode = false,
+                    onOpenWork = onOpenWork,
+                    onOverrideMatch = onOverrideMatch,
+                )
+            }
         }
     }
 }
 
-/** 搜索框（RC.05.01）：单行输入，支持清除；提交关键词由 ViewModel 防抖后触发搜索。 */
+/** 搜索框（RC.05.01）：单行输入，支持清除；提交关键词由 ViewModel 防抖后触发搜索；IME 搜索键记录历史（#10）。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SearchBar(
     query: String,
     onQueryChange: (String) -> Unit,
+    onSearchSubmit: () -> Unit,
 ) {
     OutlinedTextField(
         value = query,
@@ -297,7 +377,54 @@ private fun SearchBar(
         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
             imeAction = ImeAction.Search,
         ),
+        keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+            onSearch = { onSearchSubmit() },
+        ),
     )
+}
+
+/** #10：搜索页空态「历史搜索」区——chips 展示最近搜索；点击填入并搜索，旁标 × 删单条，顶部「清空」清全部。 */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun SearchHistorySection(
+    history: List<String>,
+    onSelectHistory: (String) -> Unit,
+    onRemoveHistory: (String) -> Unit,
+    onClearHistory: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = ScreenContentPadding.Horizontal, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("历史搜索", style = MaterialTheme.typography.titleSmall)
+            TextButton(onClick = onClearHistory) { Text("清空") }
+        }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            history.forEach { item ->
+                androidx.compose.material3.InputChip(
+                    selected = false,
+                    onClick = { onSelectHistory(item) },
+                    label = { Text(item, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    trailingIcon = {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "删除",
+                            modifier = Modifier
+                                .size(16.dp)
+                                .clickable { onRemoveHistory(item) },
+                        )
+                    },
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -476,6 +603,7 @@ private fun DiscoverScreenEmptyPreview() {
         DiscoverScreen(
             state = UiState.Empty(SEARCH_CTA),
             query = "",
+            searchHistory = emptyList(),
             tab = DiscoverTab.SEARCH,
             rankingBoards = emptyList(),
             scoreDiffItems = emptyList(),
@@ -493,6 +621,10 @@ private fun DiscoverScreenEmptyPreview() {
             onLoadMoreRanking = {},
             onLoadPool = {},
             onQueryChange = {},
+            onSearchSubmit = {},
+            onSelectHistory = {},
+            onRemoveHistory = {},
+            onClearHistory = {},
             onRetry = {},
             onOpenWork = {},
             onOverrideMatch = { _, _ -> },
@@ -825,6 +957,13 @@ private fun FilterSection(
                 }
 
                 if (expanded) {
+                // D6：展开的筛选区限高 + 自身可滚动，避免占满屏幕把下方结果列表挤成「一点点」。
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 320.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
                 // 类型（RC.05.06）
                 FilterGroup(title = "类型") {
                     com.acgcompass.domain.model.MediaType.entries.forEach { type ->
@@ -942,6 +1081,7 @@ private fun FilterSection(
                 if (!filter.isEmpty) {
                     TextButton(onClick = onClearFilter) { Text("清除全部筛选") }
                 }
+                } // D6 可滚动筛选区 Column
                 } // expanded
 
                 Text(

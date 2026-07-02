@@ -60,6 +60,8 @@ enum class CompletionCost {
  */
 data class Titles(
     val canonical: String,
+    /** D2：中文标题（如 Bangumi name_cn）。卡片/列表统一中文优先展示；缺失为 null。 */
+    val cn: String? = null,
     val ja: String? = null,
     val romaji: String? = null,
     val en: String? = null,
@@ -109,3 +111,6 @@ data class Work(
      */
     val airDate: String? = null,
 )
+
+/** D2：展示用标题——中文优先（[Titles.cn] 回退 [Titles.canonical]）。卡片/列表统一调用以保证中文优先展示。 */
+fun Work.displayTitle(): String = titles.cn ?: titles.canonical

@@ -110,6 +110,62 @@ object AcgMigrations {
     }
 
     /**
+     * v5 -> v6（C 轮）：backlog_items 新增可空 `prevStatus`（归档进吃灰馆前的 Bangumi 收藏状态）。
+     * 吃灰归档会把状态置「搁置」，此列记住原状态以便「移出吃灰馆」时还原（修复「移出后仍是搁置」）。
+     * 仅新增可空列，保留全部既有行，**不丢任何用户数据**；与 [com.acgcompass.data.local.entity.BacklogItemEntity]
+     * 生成的期望 schema 一致（TEXT、可空），以通过 Room 运行时校验与迁移测试。
+     */
+    private val MIGRATION_5_6 = Migration(5, 6) { db ->
+        db.execSQL("ALTER TABLE `backlog_items` ADD COLUMN `prevStatus` TEXT")
+    }
+
+    /**
+     * v6 -> v7（最终版算法）：新增 `work_features`（作品结构化特征缓存：社区标签计数 + staff/角色/CV +
+     * 社区评分/票数 + 集数/时长/平台）与 `recommendation_exposure`（推荐曝光记录，支撑重复推荐冷却）。
+     * 仅 CREATE TABLE，不触碰既有表，**不丢任何用户数据**；DDL 与 [com.acgcompass.data.local.entity.WorkFeatureEntity]
+     * / [com.acgcompass.data.local.entity.RecommendationExposureEntity] 生成的期望 schema 完全一致
+     * （列名/类型/可空/主键），以通过 Room 运行时校验与迁移测试。
+     */
+    private val MIGRATION_6_7 = Migration(6, 7) { db ->
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `work_features` (" +
+                "`subjectId` TEXT NOT NULL, " +
+                "`tagCountsJson` TEXT NOT NULL, " +
+                "`staff` TEXT NOT NULL, " +
+                "`characters` TEXT NOT NULL, " +
+                "`cv` TEXT NOT NULL, " +
+                "`bangumiScore` REAL NOT NULL, " +
+                "`bangumiVotes` INTEGER NOT NULL, " +
+                "`eps` INTEGER NOT NULL, " +
+                "`durationMin` INTEGER NOT NULL, " +
+                "`platform` TEXT, " +
+                "`mediaType` TEXT, " +
+                "`titles` TEXT NOT NULL, " +
+                "`updatedAt` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`subjectId`))",
+        )
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `recommendation_exposure` (" +
+                "`id` TEXT NOT NULL, " +
+                "`subjectId` TEXT NOT NULL, " +
+                "`context` TEXT NOT NULL, " +
+                "`exposedAt` INTEGER NOT NULL, " +
+                "`clickedAt` INTEGER, " +
+                "`dismissedAt` INTEGER, " +
+                "PRIMARY KEY(`id`))",
+        )
+    }
+
+    /**
+     * v7 -> v8：works 表新增可空 `titleCn`（中文标题，Bangumi name_cn，D2 卡片中文优先展示）。
+     * 仅 `ALTER TABLE ADD COLUMN`，既有行新列默认 NULL，**不丢任何用户数据**；与 [com.acgcompass.data.local.entity.WorkEntity]
+     * 生成的期望 schema 一致（TEXT、可空），以通过 Room 运行时校验与迁移测试。
+     */
+    private val MIGRATION_7_8 = Migration(7, 8) { db ->
+        db.execSQL("ALTER TABLE `works` ADD COLUMN `titleCn` TEXT")
+    }
+
+    /**
      * All registered migrations, ordered ascending by `startVersion`.
      *
      * Spread into the Room builder with `.addMigrations(*AcgMigrations.ALL)`.
@@ -119,5 +175,8 @@ object AcgMigrations {
         MIGRATION_2_3,
         MIGRATION_3_4,
         MIGRATION_4_5,
+        MIGRATION_5_6,
+        MIGRATION_6_7,
+        MIGRATION_7_8,
     )
 }

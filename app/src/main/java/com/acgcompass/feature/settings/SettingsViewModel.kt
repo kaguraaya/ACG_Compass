@@ -109,16 +109,19 @@ class SettingsViewModel @Inject constructor(
         combine(
             editState,
             credentialStore.observeStatus(),
-            settingsDataStore.settings,
+            combine(settingsDataStore.settings, settingsDataStore.bangumiUsername) { s, u -> s to u },
             saveNotice,
             localUi,
-        ) { edits, statusMap, settings, notice, local ->
+        ) { edits, statusMap, settingsAndUser, notice, local ->
+            val (settings, bangumiUsername) = settingsAndUser
             val cards = SourceDescriptors.ALL.map { descriptor ->
-                descriptor.toCardState(
+                val card = descriptor.toCardState(
                     edit = edits[descriptor.sourceId] ?: SourceEditState(),
                     status = statusMap[descriptor.sourceId],
                     settings = settings,
                 )
+                // D1：Bangumi 卡注入实际用户名（登录/同步后从 /v0/me 持久化），不再恒显「暂无数据」。
+                if (descriptor.sourceId == SourceId.BANGUMI) card.copy(username = bangumiUsername) else card
             }
             UiState.Success(
                 SettingsUiState(
@@ -208,6 +211,10 @@ class SettingsViewModel @Inject constructor(
                 clientSecret = clientSecretDraft ?: existing?.clientSecret,
                 baseUrl = existing?.baseUrl,
                 model = existing?.model,
+                // OAuth 续期字段仅由授权流程写入。用户**手动**改写 Token 时清除（手动 PAT 无 refresh_token，
+                // 留着会导致启动续期失败）；仅改 client_id/secret 等时保留，避免已登录态丢失。
+                refreshToken = if (tokenDraft != null) null else existing?.refreshToken,
+                tokenExpiresAt = if (tokenDraft != null) null else existing?.tokenExpiresAt,
             )
             if (!merged.hasAnyValue()) return@launch
             credentialStore.put(source, merged)
@@ -492,7 +499,7 @@ class SettingsViewModel @Inject constructor(
             selectedProvider = ai.selectedProvider,
             fields = fields,
             docUrl = ai.selectedProvider.docUrl,
-            budgetReminder = "AI 调用会消耗你所配置服务的额度并可能产生费用，请自行关注用量与预算（RC.14.01）。",
+            budgetReminder = "AI 调用会消耗你所配置服务的额度并可能产生费用，请自行关注用量与预算。",
             test = ai.test,
             // R-new2：任一字段（API Key / Base URL / 模型名）有草稿即可保存——此前仅 API Key 草稿才放行，
             // 导致「已配置后只想改模型名/地址」时保存按钮一直禁用、点了没反应；现合并保存不会丢失旧 Key。
@@ -671,9 +678,24 @@ private object SourceDescriptors {
             fieldDefs = listOf(
                 CredentialFieldState(
                     key = CredentialFieldKey.TOKEN,
-                    label = "Access Token / OAuth Token",
+                    label = "Access Token（手动粘贴，可选）",
                     sensitive = true,
-                    placeholder = "粘贴你的 Bangumi Access Token",
+                    optional = true,
+                    placeholder = "可直接粘贴 Token；或用下方 OAuth 登录",
+                ),
+                CredentialFieldState(
+                    key = CredentialFieldKey.CLIENT_ID,
+                    label = "App ID（OAuth，可选）",
+                    sensitive = true,
+                    optional = true,
+                    placeholder = "在 bgm.tv/dev/app 注册应用获取",
+                ),
+                CredentialFieldState(
+                    key = CredentialFieldKey.CLIENT_SECRET,
+                    label = "App Secret（OAuth，可选）",
+                    sensitive = true,
+                    optional = true,
+                    placeholder = "在 bgm.tv/dev/app 注册应用获取",
                 ),
             ),
             toggleDefs = listOf(
@@ -684,7 +706,11 @@ private object SourceDescriptors {
                     checkedSelector = { it.bangumiEnabled },
                 ),
             ),
-            infoNotes = listOf("Bangumi 为中文主数据源，需在请求头携带合规 User-Agent。"),
+            infoNotes = listOf(
+                "Bangumi 为中文主数据源，需在请求头携带合规 User-Agent。",
+                "本应用已内置 Bangumi OAuth 应用，通常直接点「用 Bangumi 登录」即可、无需填写下方字段。登录后 token 会在到期前自动续期。",
+                "高级/自托管：如需改用你自己注册的应用，在 bgm.tv/dev/app 注册（回调地址填 acgcompass://oauth/bangumi/callback），把 App ID/Secret 填入上方并保存即可覆盖内置值。",
+            ),
             showUsername = true,
             publicSearchAvailable = true,
         ),

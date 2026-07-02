@@ -10,6 +10,7 @@ import com.acgcompass.data.repository.ImportRepositoryImpl
 import com.acgcompass.data.repository.RouteMapRepositoryImpl
 import com.acgcompass.data.repository.TasteProfileRepositoryImpl
 import com.acgcompass.data.repository.TimeMachineRepositoryImpl
+import com.acgcompass.data.repository.WorkFeatureRepositoryImpl
 import com.acgcompass.data.repository.WorkRepositoryImpl
 import com.acgcompass.domain.repository.BacklogRepository
 import com.acgcompass.domain.repository.BackupRepository
@@ -18,6 +19,7 @@ import com.acgcompass.domain.repository.RouteMapRepository
 import com.acgcompass.domain.repository.TasteProfileRepository
 import com.acgcompass.domain.repository.TimeMachineRepository
 import com.acgcompass.domain.repository.WorkRepository
+import com.acgcompass.domain.taste.WorkFeatureRepository
 import com.acgcompass.domain.usecase.AggregateRatingsUseCase
 import com.acgcompass.domain.usecase.ScoringHabitCalculator
 import com.acgcompass.domain.usecase.TasteStatsCalculator
@@ -68,6 +70,10 @@ abstract class RepositoryModule {
     @Binds
     @Singleton
     abstract fun bindRouteMapRepository(impl: RouteMapRepositoryImpl): RouteMapRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindWorkFeatureRepository(impl: WorkFeatureRepositoryImpl): WorkFeatureRepository
 
     companion object {
 

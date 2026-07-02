@@ -9,6 +9,7 @@ import com.acgcompass.data.local.dao.CredentialMetaDao
 import com.acgcompass.data.local.dao.ImportDao
 import com.acgcompass.data.local.dao.RankingCacheDao
 import com.acgcompass.data.local.dao.RatingDao
+import com.acgcompass.data.local.dao.RecommendationExposureDao
 import com.acgcompass.data.local.dao.RouteNodeDao
 import com.acgcompass.data.local.dao.SnapshotDao
 import com.acgcompass.data.local.dao.SourceLinkDao
@@ -16,6 +17,7 @@ import com.acgcompass.data.local.dao.TagDao
 import com.acgcompass.data.local.dao.TasteDao
 import com.acgcompass.data.local.dao.UserCollectionDao
 import com.acgcompass.data.local.dao.WorkDao
+import com.acgcompass.data.local.dao.WorkFeatureDao
 import com.acgcompass.data.local.migration.AcgMigrations
 import dagger.Module
 import dagger.Provides
@@ -105,4 +107,13 @@ object DatabaseModule {
     @Provides
     @Singleton
     fun provideRankingCacheDao(db: AcgCompassDatabase): RankingCacheDao = db.rankingCacheDao()
+
+    @Provides
+    @Singleton
+    fun provideWorkFeatureDao(db: AcgCompassDatabase): WorkFeatureDao = db.workFeatureDao()
+
+    @Provides
+    @Singleton
+    fun provideRecommendationExposureDao(db: AcgCompassDatabase): RecommendationExposureDao =
+        db.recommendationExposureDao()
 }

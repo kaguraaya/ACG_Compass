@@ -52,6 +52,10 @@ private fun maxVariantSimilarity(a: List<String>, b: List<String>): Double {
  */
 public fun sameWork(a: Work, b: Work): Boolean {
     if (a.id == b.id) return true
+    // R-季度（通用）：续作（第N期/第N季/Season N/2nd Season/Part N 等）与正片视为不同作品。
+    // 否则「核心标题包含」或「高相似兑底」会把正片与续作误并同簇 → [persistMatches] 使续作的同源评分链接
+    // 挂到正片代表 id → 详情页正片评分被续作覆盖（如「负けヒロインが多すぎる！」正片被「…第2期」11人5.8顶替）。
+    if (seasonNumberOf(a.allTitleVariants()) != seasonNumberOf(b.allTitleVariants())) return false
     val yearConflict = a.year != null && b.year != null && a.year != b.year
     val typeConflict = mediaTypesConflict(a.mediaType, b.mediaType)
 
@@ -136,16 +140,76 @@ public fun representativeScore(confidence: Double, popularity: Int): Double {
 }
 
 /**
+ * 簇内**主导媒介类型**（按「条目数 + 评分人数」加权取最高）。用于选代表时在**同名混合媒介簇**
+ * 中收敛到主流媒介——`mediaTypesConflict` 允许游戏家族（GAME↔VN）、文字家族（漫画↔小说）同簇，
+ * 此时若代表落到少数派媒介（如 GALGAME 簇代表落到广播剧、或小说簇落到番外漫画），详情页评分人数/
+ * 简介会错配。多数表决（评分人数加权）让代表归于主流媒介，修复跨源评分错配。纯通用规则，不针对具体作品。
+ */
+private fun dominantMediaType(cluster: List<WorkMatch>): com.acgcompass.domain.model.MediaType? =
+    cluster
+        .groupBy { it.work.mediaType }
+        .mapValues { (_, ms) -> ms.size.toLong() + ms.sumOf { it.popularity.coerceAtLeast(0).toLong() } }
+        .maxByOrNull { it.value }
+        ?.key
+
+/**
  * 选取簇代表：优先 Bangumi（提供中文名），否则综合得分最高者。
  *
  * 排序键（P0-1 修正）：[representativeScore]（相似度 + 评分人数加成）降序 → 评分人数降序。
  * 据此避免代表落到续作（第二季）或同名小条目，否则详情页评分人数严重偏低
  * （如正片「27000+ 人」被第二季「11 人」顶替）。通用规则，不针对任何具体作品。
+ *
+ * C 轮加固：在 Bangumi 候选中**优先选与簇主导媒介一致者**（[dominantMediaType]），避免混合媒介簇
+ * （游戏↔VN / 漫画↔小说家族）代表落到少数派媒介导致评分错配；无主导或同型时退化为原行为。
  */
 public fun representativeOf(cluster: List<WorkMatch>): WorkMatch {
     val ranked = cluster.sortedWith(
         compareByDescending<WorkMatch> { representativeScore(it.matchConfidence.toDouble(), it.popularity) }
             .thenByDescending { it.popularity },
     )
-    return ranked.firstOrNull { it.sourceTag == SourceId.BANGUMI } ?: ranked.first()
+    val dominant = dominantMediaType(cluster)
+    return ranked.firstOrNull { it.sourceTag == SourceId.BANGUMI && it.work.mediaType == dominant }
+        ?: ranked.firstOrNull { it.sourceTag == SourceId.BANGUMI }
+        ?: ranked.firstOrNull { it.work.mediaType == dominant }
+        ?: ranked.first()
+}
+
+/** R-季度：「第N期/第N季」（中日，N 支持阿拉伯/全角/二~九）识别正则。 */
+private val SEASON_CJK_REGEX = Regex("""第\s*([0-9０-９一二三四五六七八九]+)\s*[期季]""")
+
+/** R-季度：「Season N / Nnd Season / Part N」（英，N≥2）识别正则。 */
+private val SEASON_EN_REGEX = Regex(
+    """(?:season\s*0*([2-9])|([2-9])\s*(?:st|nd|rd|th)\s*season|part\s*0*([2-9]))""",
+    RegexOption.IGNORE_CASE,
+)
+
+/**
+ * 从作品全部标题变体提取「季度/续作序号」（通用，R-季度）：无明确续作标记视为第 1 季；
+ * 命中「第N期/第N季」或「Season N / Nnd Season / Part N」（N≥2）取最大序号。仅匹配**明确续作模式**
+ * （含「第…期/季」「season」「part」关键词），不把标题内任意数字（如 22/7、K-On!）误判为季度，降低误伤。
+ * 供 [sameWork] 阻止正片与续作误合并。
+ */
+internal fun seasonNumberOf(titles: List<String>): Int {
+    var max = 1
+    for (raw in titles) {
+        SEASON_CJK_REGEX.findAll(raw).forEach { m ->
+            cjkOrArabicNumber(m.groupValues[1])?.let { if (it in 2..20) max = maxOf(max, it) }
+        }
+        SEASON_EN_REGEX.findAll(raw).forEach { m ->
+            m.groupValues.drop(1).firstOrNull { it.isNotEmpty() }?.toIntOrNull()
+                ?.let { if (it in 2..20) max = maxOf(max, it) }
+        }
+    }
+    return max
+}
+
+/** 解析阿拉伯 / 全角 / 简单中日数字（二~九）为整数；无法解析返回 null。 */
+private fun cjkOrArabicNumber(s: String): Int? {
+    val half = s.map { c -> if (c in '０'..'９') ('0'.code + (c.code - '０'.code)).toChar() else c }.joinToString("")
+    half.toIntOrNull()?.let { return it }
+    return when (half) {
+        "二" -> 2; "三" -> 3; "四" -> 4; "五" -> 5
+        "六" -> 6; "七" -> 7; "八" -> 8; "九" -> 9
+        else -> null
+    }
 }

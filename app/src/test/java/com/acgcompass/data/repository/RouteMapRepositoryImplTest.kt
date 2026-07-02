@@ -307,5 +307,7 @@ private class FakeBacklogRepository : BacklogRepository {
     override suspend fun setNote(id: String, note: String?) = Unit
     override suspend fun bulk(op: BulkOp, ids: List<String>) =
         com.acgcompass.core.common.AppResult.Success(Unit)
+    override suspend fun archiveToDust(workId: String, prevStatus: String?) = Unit
+    override suspend fun restoreFromDust(workId: String): String? = null
     override suspend fun draw(criteria: DrawCriteria): DrawResult = DrawResult(pick = null, reason = "")
 }

@@ -10,6 +10,7 @@ import com.acgcompass.data.local.dao.CredentialMetaDao
 import com.acgcompass.data.local.dao.ImportDao
 import com.acgcompass.data.local.dao.RankingCacheDao
 import com.acgcompass.data.local.dao.RatingDao
+import com.acgcompass.data.local.dao.RecommendationExposureDao
 import com.acgcompass.data.local.dao.RouteNodeDao
 import com.acgcompass.data.local.dao.SnapshotDao
 import com.acgcompass.data.local.dao.SourceLinkDao
@@ -17,6 +18,7 @@ import com.acgcompass.data.local.dao.TagDao
 import com.acgcompass.data.local.dao.TasteDao
 import com.acgcompass.data.local.dao.UserCollectionDao
 import com.acgcompass.data.local.dao.WorkDao
+import com.acgcompass.data.local.dao.WorkFeatureDao
 import com.acgcompass.data.local.entity.AiResultEntity
 import com.acgcompass.data.local.entity.BacklogItemEntity
 import com.acgcompass.data.local.entity.ChangeLogEntity
@@ -26,6 +28,7 @@ import com.acgcompass.data.local.entity.ImportItemEntity
 import com.acgcompass.data.local.entity.RankingCacheEntity
 import com.acgcompass.data.local.entity.RatingEntity
 import com.acgcompass.data.local.entity.RecommendationCountEntity
+import com.acgcompass.data.local.entity.RecommendationExposureEntity
 import com.acgcompass.data.local.entity.RouteNodeEntity
 import com.acgcompass.data.local.entity.SnapshotEntity
 import com.acgcompass.data.local.entity.SourceLinkEntity
@@ -34,6 +37,7 @@ import com.acgcompass.data.local.entity.TasteProfileEntity
 import com.acgcompass.data.local.entity.TasteTagStatEntity
 import com.acgcompass.data.local.entity.UserCollectionEntity
 import com.acgcompass.data.local.entity.WorkEntity
+import com.acgcompass.data.local.entity.WorkFeatureEntity
 import com.acgcompass.data.local.entity.WorkTagEntity
 
 /**
@@ -72,8 +76,10 @@ import com.acgcompass.data.local.entity.WorkTagEntity
         CredentialMetaEntity::class,
         UserCollectionEntity::class,
         RankingCacheEntity::class,
+        WorkFeatureEntity::class,
+        RecommendationExposureEntity::class,
     ],
-    version = 5,
+    version = 8,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -104,6 +110,10 @@ abstract class AcgCompassDatabase : RoomDatabase() {
     abstract fun userCollectionDao(): UserCollectionDao
 
     abstract fun rankingCacheDao(): RankingCacheDao
+
+    abstract fun workFeatureDao(): WorkFeatureDao
+
+    abstract fun recommendationExposureDao(): RecommendationExposureDao
 
     companion object {
         /** Physical database file name. */

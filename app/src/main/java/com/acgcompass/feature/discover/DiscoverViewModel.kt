@@ -19,12 +19,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -52,6 +54,7 @@ import kotlin.coroutines.cancellation.CancellationException
 class DiscoverViewModel @Inject constructor(
     private val workRepository: WorkRepository,
     private val backlogRepository: BacklogRepository,
+    private val settingsDataStore: com.acgcompass.data.datastore.SettingsDataStore,
 ) : ViewModel() {
 
     private val _query = MutableStateFlow("")
@@ -90,6 +93,49 @@ class DiscoverViewModel @Inject constructor(
     /** 搜索框输入变化（RC.05.01）。 */
     fun onQueryChange(query: String) {
         _query.value = query
+    }
+
+    /** #10：最近搜索历史（最新在前），供搜索页空态展示「历史搜索」。 */
+    val searchHistory: StateFlow<List<String>> =
+        settingsDataStore.searchHistory.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue = emptyList(),
+        )
+
+    /** D7：最近浏览过的作品（搜索页空态展示「上次点开的条目」）。最近浏览 id × 本地作品，缺失的跳过。 */
+    val recentlyViewedWorks: StateFlow<List<RankedWork>> =
+        combine(settingsDataStore.recentlyViewedWorkIds, workRepository.observeWorks()) { ids, works ->
+            val byId = works.associateBy { it.id }
+            ids.mapNotNull { id -> byId[id]?.let { RankedWork(it.id, WorkRatings(it).toFilteredCard()) } }
+        }.catch { emit(emptyList()) }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = emptyList(),
+            )
+
+    /** #10：用户主动提交搜索（IME 搜索键）时记录历史；搜索本身仍由 [onQueryChange] 防抖触发。 */
+    fun onSearchSubmit() {
+        val q = _query.value.trim()
+        if (q.isEmpty()) return
+        viewModelScope.launch { settingsDataStore.addSearchHistory(q) }
+    }
+
+    /** #10：点击历史项——填入搜索框（触发搜索）并把该词置顶。 */
+    fun onSelectHistory(query: String) {
+        _query.value = query
+        viewModelScope.launch { settingsDataStore.addSearchHistory(query) }
+    }
+
+    /** #10：删除单条搜索历史。 */
+    fun onRemoveHistory(query: String) {
+        viewModelScope.launch { settingsDataStore.removeSearchHistory(query) }
+    }
+
+    /** #10：清空全部搜索历史。 */
+    fun onClearHistory() {
+        viewModelScope.launch { settingsDataStore.clearSearchHistory() }
     }
 
     /** 「重试」：对当前关键词重新触发搜索（错误态 RC.03.04）。 */
@@ -188,6 +234,10 @@ class DiscoverViewModel @Inject constructor(
         // M2：进入榜单时按需加载一次真实排行（默认总榜）。
         if (tab == DiscoverTab.RANKING && scopedRanking.value is UiState.Loading) {
             loadInitialRanking(_rankingScope.value)
+        }
+        // D9：进入评分差异页时按需回填第二来源评分（内部自等公共池就绪），使差异榜不再恒空。
+        if (tab == DiscoverTab.SCORE_DIFF) {
+            backfillScoreDiffRatings()
         }
     }
 
@@ -376,6 +426,52 @@ class DiscoverViewModel @Inject constructor(
         }
     }
 
+    private var scoreDiffBackfilledOnce = false
+
+    private val _scoreDiffBackfilling = MutableStateFlow(false)
+
+    /** D9：评分差异回填进行中（评分差异页可用作页脚指示）。 */
+    val scoreDiffBackfilling: StateFlow<Boolean> = _scoreDiffBackfilling.asStateFlow()
+
+    /** D9：该作品当前缓存中「有效（分值>0）来源」的个数。 */
+    private fun WorkRatings.validSourceCount(): Int =
+        ratings?.perSource?.values?.count { it != null && it.score > 0f } ?: 0
+
+    /** D9：该作品各源评分人数的最大值（择优回填顺序用，越热门越可能匹配到第二源）。 */
+    private fun WorkRatings.topVotes(): Int =
+        ratings?.perSource?.values?.filterNotNull()?.maxOfOrNull { it.voteCount } ?: 0
+
+    /**
+     * D9：评分差异回填。「评分差异」需单作品 ≥2 个有效来源评分，而发现页批量只读本地缓存（K9），
+     * 公共池作品多半仅主源一条评分 → 差异榜恒空。进入该页时，对「当前仅 1 个有效来源、评分人数最多」的
+     * 前 [SCORE_DIFF_BACKFILL_LIMIT] 部作品按需联网交叉验证（[WorkRepository.aggregateRatings] →
+     * crossValidateRatings 落第二源），best-effort、有预算上限、失败吞掉；写回后 observeWorks 自动刷新差异榜
+     *（RC.01 3.7 / RC.17.4）。先等公共池写回再选目标，避免「池未就绪 → 0 目标 → 提前 latch」。
+     */
+    fun backfillScoreDiffRatings() {
+        if (scoreDiffBackfilledOnce || _scoreDiffBackfilling.value) return
+        _scoreDiffBackfilling.value = true
+        viewModelScope.launch {
+            try {
+                val pool = withTimeoutOrNull(POOL_READY_TIMEOUT_MS) {
+                    worksWithRatings.first { it.isNotEmpty() }
+                } ?: worksWithRatings.value
+                if (pool.isEmpty()) return@launch // 池仍未就绪，不 latch，下次进入再试。
+                val targets = pool
+                    .filter { it.validSourceCount() == 1 }
+                    .sortedByDescending { it.topVotes() }
+                    .take(SCORE_DIFF_BACKFILL_LIMIT)
+                    .map { it.work.id }
+                for (id in targets) {
+                    runCatching { workRepository.aggregateRatings(id) }
+                }
+                scoreDiffBackfilledOnce = true
+            } finally {
+                _scoreDiffBackfilling.value = false
+            }
+        }
+    }
+
     /** 更新高级筛选条件（RC.05.06）。 */
     fun onFilterChange(filter: DiscoverFilter) {
         _filter.value = filter
@@ -442,6 +538,12 @@ class DiscoverViewModel @Inject constructor(
 
         /** P2-2：榜单每页条数（触底加载更多的步长）。 */
         const val RANKING_PAGE_SIZE = 30
+
+        /** D9：评分差异回填单次联网交叉验证的作品数上限（控请求量）。 */
+        const val SCORE_DIFF_BACKFILL_LIMIT = 12
+
+        /** D9：等待公共池写回（observeWorks）的超时，超时则用当前快照（毫秒）。 */
+        const val POOL_READY_TIMEOUT_MS = 8_000L
     }
 }
 

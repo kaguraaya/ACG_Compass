@@ -61,11 +61,21 @@ class PersonalTasteScorerTest : StringSpec({
         (s.personal > 0.55f) shouldBe true
     }
 
-    "命中低分标签 → 个人分被下压到基线 0.35 以下" {
+    "命中低分标签 → 个人分被明显下压到基线以下" {
         val p = profile(low = listOf("猎奇" to 5))
         val s = scorer.score(work("a", listOf("猎奇")), p, communityScore10 = 7f)
         s.matchedLowTags shouldBe listOf("猎奇")
-        (s.personal < 0.35f) shouldBe true
+        (s.personal < 0.30f) shouldBe true
+    }
+
+    "C 轮：口味匹配拉开差距——强命中明显高、口味相悖明显低（对比度扩展）" {
+        val p = profile(high = listOf("科幻" to 6, "悬疑" to 5, "时间旅行" to 3), low = listOf("子供向" to 4))
+        val loved = scorer.score(work("loved", listOf("科幻", "悬疑", "时间旅行")), p, communityScore10 = 9f)
+        val meh = scorer.score(work("meh", listOf("子供向")), p, communityScore10 = 6f)
+        // 喜欢的高分番（多个高分题材命中）应显著偏高；口味相悖的明显偏低。
+        (loved.fraction > 0.8f) shouldBe true
+        (meh.fraction < 0.4f) shouldBe true
+        (loved.fraction - meh.fraction > 0.45f) shouldBe true
     }
 
     "元数据标签（年份）权重远低于题材标签 → 同次数命中题材分更高（题材加成/元数据弱化）" {

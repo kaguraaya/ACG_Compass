@@ -106,6 +106,8 @@ data class SettingsActions(
     val onBangumiCustomUrlChange: (String) -> Unit = {},
     val onSaveBangumiCustomUrl: () -> Unit = {},
     val onBangumiConsentChange: (Boolean) -> Unit = {},
+    // RC.02 4.6：用 Bangumi OAuth 登录（导航到 WebView 授权页）
+    val onBangumiLogin: () -> Unit = {},
     // H7：自动同步间隔（分钟，0=关闭）
     val onSetAutoSyncInterval: (Int) -> Unit = {},
     // Phase④：推荐社区均分下限 / 口味匹配度阈值
@@ -171,6 +173,7 @@ fun SettingsSourceScreen(
     onOpenDoc: (String) -> Unit = {},
     onClearLocalData: () -> Unit = {},
     onClearCache: () -> Unit = {},
+    onBangumiLogin: () -> Unit = {},
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val actions = rememberSettingsActions(
@@ -179,6 +182,7 @@ fun SettingsSourceScreen(
         onOpenDoc = onOpenDoc,
         onClearLocalData = onClearLocalData,
         onClearCache = onClearCache,
+        onBangumiLogin = onBangumiLogin,
     )
 
     // 「凭据仅保存在本机」提示：与主页面一致（RC.02 4.4）。
@@ -223,6 +227,7 @@ private fun rememberSettingsActions(
     onOpenDoc: (String) -> Unit,
     onClearLocalData: () -> Unit,
     onClearCache: () -> Unit,
+    onBangumiLogin: () -> Unit = {},
 ): SettingsActions {
     val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -355,6 +360,7 @@ private fun rememberSettingsActions(
             onBangumiCustomUrlChange = viewModel::onBangumiCustomUrlChange,
             onSaveBangumiCustomUrl = viewModel::onSaveBangumiCustomUrl,
             onBangumiConsentChange = viewModel::onBangumiConsentChange,
+            onBangumiLogin = onBangumiLogin,
             onSetAutoSyncInterval = viewModel::onSetAutoSyncInterval,
             onSetRecommendMinScore = viewModel::onSetRecommendMinScore,
             onSetTasteMatchThreshold = viewModel::onSetTasteMatchThreshold,
@@ -590,11 +596,42 @@ private fun SettingsSourceDetail(
                         SourceSettingsCard(card = card.copy(expanded = true), actions = actions)
                     }
                     if (card.sourceId == SourceId.BANGUMI) {
+                        item(key = "bangumi_oauth_login") {
+                            BangumiOAuthLoginCard(onLogin = actions.onBangumiLogin)
+                        }
                         item(key = "bangumi_api") {
                             BangumiApiConfigCard(state = data.bangumiApi, actions = actions)
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/** RC.02 4.6：Bangumi OAuth 登录入口卡片（设置 → Bangumi）。已内置应用时可直接登录，否则提示自填。 */
+@Composable
+private fun BangumiOAuthLoginCard(onLogin: () -> Unit) {
+    val hasBuiltIn = com.acgcompass.BuildConfig.BANGUMI_CLIENT_ID.isNotBlank()
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(text = "用 Bangumi 登录（OAuth）", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = if (hasBuiltIn) {
+                    "已内置 Bangumi 应用，直接点下方按钮登录即可。登录后 token 会在到期前自动续期。" +
+                        "（高级：如需用你自己注册的应用，可在上方填写 App ID/Secret 覆盖。）"
+                } else {
+                    "先在上方填写并保存 App ID 与 App Secret（在 bgm.tv/dev/app 注册应用，回调地址填 " +
+                        "acgcompass://oauth/bangumi/callback），再点下方按钮登录。登录后 token 会在到期前自动续期。"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Button(onClick = onLogin, modifier = Modifier.fillMaxWidth()) {
+                Text("用 Bangumi 登录")
             }
         }
     }

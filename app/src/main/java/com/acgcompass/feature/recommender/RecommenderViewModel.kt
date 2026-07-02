@@ -8,8 +8,12 @@ import com.acgcompass.core.ui.Cta
 import com.acgcompass.core.ui.UiState
 import com.acgcompass.core.designsystem.WorkCardUiModel
 import com.acgcompass.data.datastore.SettingsDataStore
+import com.acgcompass.data.local.dao.RecommendationExposureDao
 import com.acgcompass.data.local.dao.UserCollectionDao
+import com.acgcompass.data.local.entity.RecommendationExposureEntity
+import com.acgcompass.data.taste.TasteEngine
 import com.acgcompass.domain.model.MediaType
+import com.acgcompass.domain.model.SourceId
 import com.acgcompass.domain.model.TagNoise
 import com.acgcompass.domain.model.TasteProfile
 import com.acgcompass.domain.model.Work
@@ -20,6 +24,7 @@ import com.acgcompass.domain.repository.DrawResult
 import com.acgcompass.domain.repository.TasteProfileRepository
 import com.acgcompass.domain.repository.WorkRepository
 import com.acgcompass.domain.usecase.PersonalTasteScorer
+import com.acgcompass.domain.usecase.TasteTagTaxonomy
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -60,6 +65,8 @@ class RecommenderViewModel @Inject constructor(
     private val personalTasteScorer: PersonalTasteScorer,
     private val userCollectionDao: UserCollectionDao,
     private val settingsDataStore: SettingsDataStore,
+    private val tasteEngine: TasteEngine,
+    private val exposureDao: RecommendationExposureDao,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -89,6 +96,12 @@ class RecommenderViewModel @Inject constructor(
             .distinctUntilChanged()
             .mapLatest { pool -> computeAvailableTags(pool) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    init {
+        // N4：进入推荐页即在后台一次性建好画像（联网补齐 work_features），使后续提交能命中 12 维引擎，
+        // 且**不阻塞**任何一次提交（提交热路径只读缓存）。失败静默（不崩、不伪造）。
+        viewModelScope.launch { runCatching { tasteEngine.ensureReady() } }
+    }
 
     // region 输入选择（RC.11.01/02/03）
 
@@ -132,9 +145,13 @@ class RecommenderViewModel @Inject constructor(
         _input.update { it.copy(lateNightMode = !it.lateNightMode) }
     }
 
-    /** I9：选择候选池（待补池 / 全部作品）。P2-5：切换池后可用标签集变化，清空已选标签避免无效残留。 */
+    /**
+     * I9：选择候选池（待补池 / 全部作品）。#9：切换池**保留已选标签**——此前会清空，导致用户在「待补池」
+     * 选好标签切到「全部作品」后标签全没了、需重选。标签是「命中其一即可」的软筛选，且 UI 的 displayTags
+     * 会并入已选标签照常展示/高亮；新池若无该题材作品，仅该档推荐变少，不会出错。
+     */
     fun onSelectCandidatePool(pool: CandidatePool) {
-        _input.update { it.copy(candidatePool = pool, selectedTags = emptySet()) }
+        _input.update { it.copy(candidatePool = pool) }
     }
 
     // endregion
@@ -185,12 +202,16 @@ class RecommenderViewModel @Inject constructor(
         }
     }
 
-    /** P2-5：统计候选池作品的真实社区标签（频次降序、过滤噪声），取前 [MAX_TAG_OPTIONS] 作为筛选项。 */
+    /**
+     * 统计候选池作品的真实社区标签作为「想看的标签」筛选项（频次降序，取前 [MAX_TAG_OPTIONS]）。
+     * C 轮：仅保留**题材**标签（[TasteTagTaxonomy.isSelectableGenre] 白名单），剔除厂商/人物名/梗/
+     * 声优/时间等噪声——用户只想按「战斗、奇幻」这类题材筛选；同时减少 chip 数量，缓解展开/下滑掉帧。
+     */
     private suspend fun computeAvailableTags(pool: CandidatePool): List<String> =
         loadCandidates(pool)
             .flatMap { w -> w.tags.map { it.name } }
             .map { TagNoise.clean(it) }
-            .filter { it.length >= 2 && !TagNoise.isNoise(it) }
+            .filter { TasteTagTaxonomy.isSelectableGenre(it) }
             .groupingBy { it }
             .eachCount()
             .entries
@@ -210,6 +231,10 @@ class RecommenderViewModel @Inject constructor(
         candidates: List<Work>,
     ): UiState<List<RecommendationUiModel>> {
         val taste: TasteProfile? = tasteProfileRepository.observeTasteProfile().first()
+        // N4：热路径**不联网**——只用已缓存特征快速重建画像，避免「今晚看什么」提交时被 refreshFull 的
+        // 大量联网补齐（最多 60 次串行）阻塞成「转半天」。真正的联网补齐由 init 后台任务一次性完成；本轮若
+        // 画像/特征尚未就绪则回退本地 PersonalTasteScorer（仍个性化、瞬时返回）。
+        runCatching { tasteEngine.rebuildFromCache() }
         // Phase④：用户可调的推荐社区分下限与口味匹配度阈值（默认 6.0 / 关闭）。
         val minScore = settingsDataStore.recommendMinCommunityScore.first()
         val tasteThreshold = settingsDataStore.tasteMatchThreshold.first()
@@ -221,7 +246,9 @@ class RecommenderViewModel @Inject constructor(
         }.getOrDefault(emptySet())
 
         // P2-5：用户直接选择真实标签（来自候选池作品的 Bangumi 社区标签）；命中即匹配。
-        val selectedTags = input.selectedTags
+        // N5：chip 标签是清洗后的社区标签，而作品原始标签未清洗——两侧口径不同会导致「选了却命不中」。
+        // 统一清洗后再比较（下方硬筛 / 覆盖率均用清洗后的标签）。
+        val selectedTags = input.selectedTags.map { TagNoise.clean(it) }.filter { it.isNotEmpty() }.toSet()
         val tagSelected = selectedTags.isNotEmpty()
 
         // 接受程度「不要X」→ 硬排除关键词（不要太累→烧脑/上头/意识流/电波）；「不要未完结」单独处理。
@@ -237,6 +264,8 @@ class RecommenderViewModel @Inject constructor(
             }
             .mapNotNull { w ->
                 val tagNames = w.tags.map { it.name }
+                // N5：与所选标签同口径清洗，保证「chip 是清洗后名、作品是原始名」也能命中。
+                val tagNamesClean = tagNames.map { TagNoise.clean(it) }
                 // 硬排除：未完结（不要未完结）/ 含「不要X」关键词的作品直接淘汰。
                 if (excludeUnfinished && w.status != com.acgcompass.domain.model.ReleaseStatus.FINISHED) {
                     return@mapNotNull null
@@ -247,9 +276,11 @@ class RecommenderViewModel @Inject constructor(
                     return@mapNotNull null
                 }
                 // P2-5 标签硬筛：选了标签 → 必须命中至少一个（等值或包含）；否则淘汰。
-                val matched = tagNames.filter { t -> selectedTags.any { sel -> t == sel || t.contains(sel) } }
+                val matched = tagNamesClean.filter { t -> selectedTags.any { sel -> t == sel || t.contains(sel) } }
                 if (tagSelected && matched.isEmpty()) return@mapNotNull null
-                w to matched.take(3)
+                // B：soft-AND 覆盖率——命中的「所选标签」去重计数（非作品标签命中数），驱动「尽量多命中所选标签」。
+                val hitSelected = selectedTags.count { sel -> tagNamesClean.any { t -> t == sel || t.contains(sel) } }
+                Triple(w, matched.take(3), hitSelected)
             }
             .toList()
 
@@ -259,6 +290,7 @@ class RecommenderViewModel @Inject constructor(
         data class Scored(
             val work: Work,
             val matchedSelected: List<String>,
+            val hitSelected: Int,
             val matchedHigh: List<String>,
             val personal: Float,
             val mean10: Float?,
@@ -267,9 +299,23 @@ class RecommenderViewModel @Inject constructor(
             val tasteAvailable: Boolean,
         )
 
-        // 第二步：个性化打分。用共享 [PersonalTasteScorer]——以「作品标签 × 你高/低分标签的加权重合」为主导，
+        // P5：重复推荐冷却——最近 14 天已推过的作品本轮回避；若回避后候选为空则忽略冷却（绝不无结果）。
+        val recentlyExposed = runCatching {
+            exposureDao.exposedSince(System.currentTimeMillis() - REPEAT_COOLDOWN_MS).toSet()
+        }.getOrDefault(emptySet())
+        val workingSet = prefiltered.filterNot { it.first.id in recentlyExposed }.ifEmpty { prefiltered }
+
+        // 第二步：精排打分。优先用最终版 12 维口味引擎（已校准 + 分数拉开 + 已评分偏置）的匹配度（0–100）；
+        // 引擎对该候选不可用（无特征 / 非 Bangumi / 画像未建）时回退共享 [PersonalTasteScorer] 旧标签重合估计。
         // 社区评分仅作轻量质量护栏（贝叶斯均分，弱化低评分人数的高分），随机扰动保证多次提交的多样性。
-        val ranked = prefiltered.map { (w, matchedSelected) ->
+        val engineScores: Map<String, com.acgcompass.domain.taste.TasteMatchResult> = runCatching {
+            tasteEngine.scoreBatch(
+                workingSet.mapNotNull { subjectIdOf(it.first) },
+                networkBudget = TONIGHT_FEATURE_BUDGET,
+            )
+        }.getOrDefault(emptyMap())
+
+        val ranked = workingSet.map { (w, matchedSelected, hitSelected) ->
             val agg = workRepository.aggregateRatingsCached(w.id)
             val mean = agg.mean10()
             val votes = agg.totalVotes()
@@ -280,29 +326,46 @@ class RecommenderViewModel @Inject constructor(
             } else {
                 mean
             }
-            val ts = personalTasteScorer.score(w, taste, bayes)
             val communityNudge = (bayes?.div(10f) ?: 0.5f).coerceIn(0f, 1f)
-            // 综合分：个人口味主导（personal 0~1 ×3），所选标签命中加成，社区仅轻量护栏，随机扰动多样化。
-            val combined = ts.personal * 3f +
-                matchedSelected.size * 0.6f +
-                communityNudge * 0.6f +
-                (Math.random().toFloat() * 0.8f)
-            Scored(
-                w, matchedSelected, ts.matchedHighTags.take(3), ts.personal, mean, combined,
-                tasteFraction = if (ts.available) ts.fraction else null,
-                tasteAvailable = ts.available,
-            )
+            // B：意图加成——用户选了标签即强当下意图，按「命中所选标签的覆盖率」soft-AND 加权（命中越全越高），
+            // 取代旧「命中数 × 0.6」（绝对计数无法区分 2/2 全中与 2/5 擦边）。未选标签时为 0，回到纯口味个性化。
+            val intentBonus = if (tagSelected && selectedTags.isNotEmpty()) {
+                (hitSelected.toFloat() / selectedTags.size) * INTENT_COVERAGE_WEIGHT
+            } else {
+                0f
+            }
+            val engine = subjectIdOf(w)?.let { engineScores[it] }
+            if (engine != null) {
+                // 引擎匹配度 0–100 → 0~1 作为主导个人口味分量（已拉开差距）。
+                val frac = (engine.score / 100f).coerceIn(0f, 1f)
+                val combined = frac * 3f + intentBonus + communityNudge * 0.6f +
+                    (Math.random().toFloat() * 0.8f)
+                Scored(w, matchedSelected, hitSelected, engine.reasons.take(3).map { it.label }, frac, mean, combined, frac, true)
+            } else {
+                val ts = personalTasteScorer.score(w, taste, bayes)
+                val combined = ts.personal * 3f + intentBonus + communityNudge * 0.6f +
+                    (Math.random().toFloat() * 0.8f)
+                Scored(
+                    w, matchedSelected, hitSelected, ts.matchedHighTags.take(3), ts.personal, mean, combined,
+                    tasteFraction = if (ts.available) ts.fraction else null,
+                    tasteAvailable = ts.available,
+                )
+            }
         }
 
-        // 明显低分（< 下限）的不推；都低则不强过滤（避免空结果）。
-        val filtered = ranked
-            .filter { it.mean10 == null || it.mean10 >= minScore }
-            .filter { !it.tasteAvailable || it.tasteFraction == null || it.tasteFraction >= tasteThreshold }
-            .ifEmpty {
-                // Phase④：口味阈值过严导致空池 → 放宽阈值，仅保留社区分下限，避免空结果（仍按综合分排序）。
-                ranked.filter { it.mean10 == null || it.mean10 >= minScore }.ifEmpty { ranked }
-            }
+        // N5 质量护栏 + 兜底（修「关了口味限制、且选了待补池里确有的标签，仍一个都推不出」）：
+        // 1) 社区分下限：有评分则须 >= minScore；无评分（null）放行。
+        // 2) 口味下限：**尊重用户关闭**——阈值=0（关闭）时不施加任何口味下限（此前强加 0.45 使关闭形同虚设）。
+        // 3) 逐级放宽兜底：命中所选标签的候选不得被护栏清空——先按双下限筛，空则去掉口味下限，再空则仅用标签硬筛结果。
+        val tasteFloor = tasteThreshold.coerceAtLeast(0f)
+        fun passesCommunity(s: Scored): Boolean = s.mean10 == null || s.mean10 >= minScore
+        fun passesTaste(s: Scored): Boolean =
+            tasteFloor <= 0f || !s.tasteAvailable || s.tasteFraction == null || s.tasteFraction >= tasteFloor
+        val filtered = ranked.filter { passesCommunity(it) && passesTaste(it) }
+            .ifEmpty { ranked.filter { passesCommunity(it) } }
+            .ifEmpty { ranked }
             .sortedByDescending { it.combined }
+        if (filtered.isEmpty()) return UiState.Empty(NO_CANDIDATE_CTA)
 
         // 从综合分 top 段随机抽取，制造多样性；抽中后再按综合分排序（稳妥档=其中最贴合的一部）。
         val poolSize = if (input.indecisionMode) 6 else 12
@@ -312,13 +375,18 @@ class RecommenderViewModel @Inject constructor(
             .sortedByDescending { it.combined }
         if (picks.isEmpty()) return UiState.Empty(NO_CANDIDATE_CTA)
 
+        recordExposure(picks.map { it.work })
+
         val kinds = listOf(RecommendationKind.SAFE, RecommendationKind.GAMBLE, RecommendationKind.WILDCARD)
         val recommendations = picks.mapIndexed { idx, s ->
             val kind = kinds.getOrElse(idx) { RecommendationKind.WILDCARD }
             val ratingPart = s.mean10?.let { "，社区均分约 %.1f".format(it) }.orEmpty()
             // 理由聚焦「为什么这部贴合你」：优先所选标签，其次你高分常见标签，再退化为综合口碑。
             val reason = when {
-                s.matchedSelected.isNotEmpty() -> "贴合你想看的标签：${s.matchedSelected.joinToString("、")}$ratingPart"
+                s.matchedSelected.isNotEmpty() -> {
+                    val cov = if (selectedTags.size > 1) "（命中 ${s.hitSelected}/${selectedTags.size}）" else ""
+                    "贴合你想看的标签：${s.matchedSelected.joinToString("、")}$cov$ratingPart"
+                }
                 s.matchedHigh.isNotEmpty() -> "契合你的长期口味：常给高分的「${s.matchedHigh.joinToString("、")}」$ratingPart"
                 else -> "综合口碑与你的口味挑选$ratingPart"
             }
@@ -358,6 +426,29 @@ class RecommenderViewModel @Inject constructor(
                     w.titles.ja?.takeIf { it.isNotBlank() } ?: w.titles.canonical,
                 ).isBlank()
             }
+    }
+
+    /** P5：候选作品的 Bangumi subjectId（主源为 Bangumi 时即数字 work.id；否则 null → 引擎跳过、回退旧打分）。 */
+    private fun subjectIdOf(w: Work): String? =
+        if (w.primarySource == SourceId.BANGUMI) w.id.takeIf { it.toIntOrNull() != null } else null
+
+    /** P5：记录本轮「今晚看什么」曝光（支撑重复推荐冷却与后续点击统计）。best-effort，失败静默不影响结果。 */
+    private suspend fun recordExposure(works: List<Work>) {
+        runCatching {
+            val now = System.currentTimeMillis()
+            exposureDao.upsertAll(
+                works.map { w ->
+                    RecommendationExposureEntity(
+                        id = "tonight:${w.id}",
+                        subjectId = subjectIdOf(w) ?: w.id,
+                        context = "tonight",
+                        exposedAt = now,
+                        clickedAt = null,
+                        dismissedAt = null,
+                    )
+                },
+            )
+        }
     }
 
     /** Q3：期末保护——排除长篇坑/未完结/高耗能（致郁·上头·烧脑）作品。 */
@@ -408,6 +499,21 @@ class RecommenderViewModel @Inject constructor(
 
         /** P2-5：动态标签筛选项最多展示个数（按频次取前 N，避免选项过多）。 */
         const val MAX_TAG_OPTIONS = 30
+
+        /**
+         * B：意图覆盖率加成权重。用户主动选标签 = 强当下意图，按命中所选标签的覆盖率（0~1）× 此值加分，
+         * 全命中 +2.0（约等于口味 frac×3 的 0.67），实现 soft-AND「尽量多命中所选标签」而非命中 1 个即满足。
+         */
+        const val INTENT_COVERAGE_WEIGHT = 2.0f
+
+        /**
+         * N4：今晚精排**不再**在提交热路径联网补齐 work_features（此前 24 次串行联网 → 每次提交都「转半天」）。
+         * 只用已缓存特征打分；未缓存者回退本地 PersonalTasteScorer。特征由 init 后台 ensureReady 与导入 / 同步补齐。
+         */
+        const val TONIGHT_FEATURE_BUDGET = 0
+
+        /** P5：重复推荐冷却窗口（最近此时长内推过的作品本轮回避）。 */
+        const val REPEAT_COOLDOWN_MS = 14L * 24 * 3600 * 1000
 
         /** P0-4：接受程度「不要X」→ 硬排除的题材关键词（不要太累→烧脑/上头/意识流/电波）。 */
         val ACCEPTANCE_EXCLUDE: Map<AcceptanceOption, List<String>> = mapOf(

@@ -20,6 +20,8 @@ data class WorkEntity(
     val titleJa: String?,
     val titleRomaji: String?,
     val titleEn: String?,
+    /** D2：中文标题（Bangumi name_cn），用于卡片/列表中文优先展示；可空。v8 新增。 */
+    val titleCn: String? = null,
     /** Serialized List<String> via Converters. */
     val aliases: List<String>,
     val mediaType: String,

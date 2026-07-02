@@ -59,7 +59,6 @@ import com.acgcompass.domain.model.Priority
 import com.acgcompass.domain.repository.BacklogFilter
 import com.acgcompass.domain.repository.BacklogSort
 import com.acgcompass.domain.repository.BulkOp
-import com.acgcompass.domain.repository.DrawResult
 
 /**
  * 待补池路由入口（RC.08 / Requirements 8.1, 10.1–10.6）。连接 [BacklogViewModel] 并把
@@ -123,7 +122,7 @@ fun BacklogScreen(
     sort: BacklogSort,
     selectionMode: Boolean,
     selectedIds: Set<String>,
-    drawResult: DrawResult?,
+    drawResult: DrawUiResult?,
     gridMode: Boolean = false,
     onToggleGridMode: () -> Unit = {},
     onSortSelected: (BacklogSort) -> Unit,
@@ -452,33 +451,34 @@ private fun BulkActionBar(
 /** 一键抽番结果弹窗（RC.08.06）：展示抽中作品与可解释理由（非纯随机）。 */
 @Composable
 private fun DrawResultDialog(
-    result: DrawResult,
+    result: DrawUiResult,
     onDismiss: () -> Unit,
     onOpenDetail: (String) -> Unit,
 ) {
-    val pick = result.pick
+    val pickId = result.workId
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (pick != null) "今晚就看它" else "抽番结果") },
+        title = { Text(if (pickId != null) "今晚就看它" else "抽番结果") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (pick != null) {
-                    Text(pick.workId, style = MaterialTheme.typography.titleMedium)
+                if (pickId != null) {
+                    // D5：显示作品名（缺失才回退 id）。
+                    Text(result.title ?: pickId, style = MaterialTheme.typography.titleMedium)
                 }
                 Text(result.reason, style = MaterialTheme.typography.bodyMedium)
             }
         },
         confirmButton = {
-            if (pick != null) {
+            if (pickId != null) {
                 TextButton(onClick = {
                     onDismiss()
-                    onOpenDetail(pick.workId)
+                    onOpenDetail(pickId)
                 }) { Text("查看详情") }
             } else {
                 TextButton(onClick = onDismiss) { Text("知道了") }
             }
         },
-        dismissButton = if (pick != null) {
+        dismissButton = if (pickId != null) {
             { TextButton(onClick = onDismiss) { Text("关闭") } }
         } else {
             null

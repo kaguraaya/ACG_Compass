@@ -33,9 +33,11 @@ data class OnboardingUiState(
     val subtitle: String,
     val highlights: List<OnboardingHighlight>,
     val confirmLabel: String,
+    /** N6：个人 Token 经社区反代中转的同意勾选文案（默认不勾选也能用，仅公共搜索经反代，不发 Token）。 */
+    val consentPrompt: String,
 ) {
     companion object {
-        /** 默认引导文案（RC.03.01）。 */
+        /** 默认引导文案（RC.03.01 / N6：反代默认 + 多源开箱 + AI 可选）。 */
         val DEFAULT: OnboardingUiState = OnboardingUiState(
             title = "欢迎使用 ACG Compass",
             subtitle = "你的补番补游决策助手 · 本地优先 · 隐私安全",
@@ -49,11 +51,24 @@ data class OnboardingUiState(
                     description = "你的收藏、评分与画像默认仅保存在本机，不上传云端。",
                 ),
                 OnboardingHighlight(
-                    title = "可稍后配置 API Key",
-                    description = "各数据源（Bangumi / AniList / MAL 等）的 API Key 可稍后在「我的 → 设置」按需配置，凭据仅加密保存在本机。",
+                    title = "Bangumi 默认走社区反代",
+                    description = "默认使用社区反代地址访问 Bangumi —— 官方地址在部分网络需特殊环境，反代通常可直连；" +
+                        "建议保留反代。可随时在「设置 → 数据源」切回官方或更换地址。",
+                ),
+                OnboardingHighlight(
+                    title = "多源评分开箱即用",
+                    description = "已默认启用 Bangumi / Jikan(MAL 公开数据) / VNDB 等无需 API Key 的数据源，" +
+                        "打开即可看多平台评分对照；AniList、MAL 官方等可按需在设置开启。",
+                ),
+                OnboardingHighlight(
+                    title = "AI 增强为可选项",
+                    description = "口味匹配、无剧透雷达等 AI 功能可选：推荐使用 DeepSeek 或其他国内 OpenAI 兼容服务，" +
+                        "在「设置 → AI」填入 API Key 即可（凭据仅加密保存在本机，未配置时自动回退本地规则）。",
                 ),
             ),
             confirmLabel = "开始使用",
+            consentPrompt = "我已知晓并同意：使用个人同步（登录 Bangumi）时，我的个人 Token 将经上述社区反代地址中转。" +
+                "不勾选也可正常使用 —— 仅公共搜索经反代，不会发送你的 Token。",
         )
     }
 }

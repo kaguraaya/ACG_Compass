@@ -4,12 +4,14 @@ import androidx.annotation.VisibleForTesting
 import com.acgcompass.core.designsystem.WorkCardUiModel
 import com.acgcompass.domain.model.CompletionCost
 import com.acgcompass.domain.model.MediaType
+import com.acgcompass.domain.model.displayTitle
 import com.acgcompass.domain.model.RatingAggregate
 import com.acgcompass.domain.model.RatingEntry
 import com.acgcompass.domain.model.ReleaseStatus
 import com.acgcompass.domain.model.SourceId
 import com.acgcompass.domain.model.TagCategory
 import com.acgcompass.domain.model.Work
+import com.acgcompass.domain.usecase.TasteTagTaxonomy
 
 /**
  * 发现页榜单 / 评分差异榜 / 高级筛选（RC.05.04/05/06，任务 21.2，Requirements 7.4–7.7）的
@@ -105,7 +107,7 @@ fun rankedCardOf(
         workId = work.id,
         card = WorkCardUiModel(
             coverUrl = work.coverUrl,
-            title = work.titles.canonical,
+            title = work.displayTitle(),
             subtitle = subtitle,
             type = when (work.mediaType) {
                 MediaType.ANIME -> "动画"
@@ -239,12 +241,71 @@ internal fun scoreSpread(perSource: Map<SourceId, RatingEntry?>): Float? {
 }
 
 /**
+ * N1：把「同一部番的多源未合并行」聚为一簇去重——修评分差异榜里同番重复（例：中文名一条 + 罗马音名一条，
+ * 且因 D9 交叉验证都被挂上同一 Jikan 分）。聚类键取标题变体（canonical/cn/ja/romaji/en/aliases 归一化，
+ * 长度≥4 去噪）的**交集**，跨语言也能连上（Bangumi 别名常含罗马音 / 日文）；每簇仅保留 Bangumi / 中文代表
+ * （来源优先级 + 评分源更全者），去重后仍以**中文名**呈现。不臆造合并分值（避免误并不同季导致分数错配）。
+ */
+private fun dedupeSameWork(works: List<WorkRatings>): List<WorkRatings> {
+    if (works.size < 2) return works
+    val parent = IntArray(works.size) { it }
+    fun find(x: Int): Int {
+        var root = x
+        while (parent[root] != root) root = parent[root]
+        var cur = x
+        while (parent[cur] != cur) {
+            val next = parent[cur]
+            parent[cur] = root
+            cur = next
+        }
+        return root
+    }
+    fun union(a: Int, b: Int) {
+        val ra = find(a)
+        val rb = find(b)
+        if (ra != rb) parent[ra] = rb
+    }
+    val keyToIndex = HashMap<String, Int>()
+    works.forEachIndexed { i, wr ->
+        for (key in titleVariantKeys(wr.work)) {
+            val prev = keyToIndex[key]
+            if (prev == null) keyToIndex[key] = i else union(prev, i)
+        }
+    }
+    val clusters = LinkedHashMap<Int, MutableList<WorkRatings>>()
+    works.forEachIndexed { i, wr -> clusters.getOrPut(find(i)) { mutableListOf() }.add(wr) }
+    return clusters.values.map { group ->
+        group.minByOrNull { scoreDiffSourceRank(it.work.primarySource) * 1000 - (it.ratings?.perSource?.size ?: 0) }
+            ?: group.first()
+    }
+}
+
+/** N1：作品标题的归一化变体键集合（跨语言同番聚类用）；过滤过短噪声键，避免误并。 */
+private fun titleVariantKeys(work: Work): Set<String> {
+    val t = work.titles
+    return (listOfNotNull(t.canonical, t.cn, t.ja, t.romaji, t.en) + t.aliases)
+        .asSequence()
+        .map { com.acgcompass.domain.matching.normalizeCompact(it) }
+        .filter { it.length >= 4 }
+        .toSet()
+}
+
+/** N1：评分差异去重的来源优先级（越小越优先作代表）：Bangumi > AniList > MAL > Jikan > VNDB。 */
+private fun scoreDiffSourceRank(source: SourceId): Int = when (source) {
+    SourceId.BANGUMI -> 0
+    SourceId.ANILIST -> 1
+    SourceId.MAL -> 2
+    SourceId.JIKAN -> 3
+    SourceId.VNDB -> 4
+}
+
+/**
  * 构建评分差异榜（RC.05.05）：保留评分差距 ≥ [SCORE_DIFF_THRESHOLD] 的作品，按差距降序排列。
- * 仅展示客观差距数值与各源明细，措辞中性（见 [SCORE_DIFF_NEUTRAL_NOTE]）。
+ * 仅展示客观差距数值与各源明细，措辞中性（见 [SCORE_DIFF_NEUTRAL_NOTE]）。N1：先按同番聚类去重。
  */
 @VisibleForTesting
 internal fun buildScoreDiffBoard(works: List<WorkRatings>): List<ScoreDiffItem> =
-    works.mapNotNull { wr ->
+    dedupeSameWork(works).mapNotNull { wr ->
         val ratings = wr.ratings ?: return@mapNotNull null
         val spread = scoreSpread(ratings.perSource) ?: return@mapNotNull null
         if (spread < SCORE_DIFF_THRESHOLD) return@mapNotNull null
@@ -354,8 +415,9 @@ internal fun buildFilterFacets(works: List<WorkRatings>): FilterFacets {
     val lengths = works.tagNames(TagCategory.LENGTH)
     val risks = works.tagNames(TagCategory.RISK)
     val moods = works.tagNames(TagCategory.MOOD)
-    // 题材 = 本地社区标签 ∪ 常见题材兜底；常见题材在前，便于快速选择。
-    val localGenres = works.tagNames(TagCategory.CONTENT)
+    // 题材 = 常见题材兜底 ∪ 本地社区题材标签。C 轮：本地标签只保留**题材白名单**
+    // （[TasteTagTaxonomy.isSelectableGenre]），过滤掉已存储的人物名 / 声优 / 梗 / 时间等噪声（用户：筛选只要题材）。
+    val localGenres = works.tagNames(TagCategory.CONTENT).filter { TasteTagTaxonomy.isSelectableGenre(it) }
     val genres = (COMMON_GENRES + localGenres).distinct()
     return FilterFacets(
         years = years,
@@ -436,16 +498,15 @@ private fun Work.hasAnyTag(category: TagCategory, names: Set<String>): Boolean =
 /** 把 [WorkRatings] 折叠为通用作品卡片（用于评分差异榜与筛选结果）。 */
 @VisibleForTesting
 internal fun WorkRatings.toFilteredCard(): WorkCardUiModel {
-    val best = ratings?.perSource?.entries
-        ?.mapNotNull { (source, entry) -> entry?.let { source to normalizeScore(source, it.score) } }
-        ?.maxByOrNull { it.second }
+    // D3：评分来源统一优先级（Bangumi 优先），避免每张卡显示不同源造成「乱」。
+    val preferred = preferredSourceScore(ratings)
     return WorkCardUiModel(
         coverUrl = work.coverUrl,
-        title = work.titles.canonical,
+        title = work.displayTitle(),
         subtitle = work.subtitleText(),
         type = work.mediaType.boardLabel(),
         // 缺失即「暂无数据」：无任何源评分时 ratingText 为 null（RC.01 3.7）。
-        ratingText = best?.let { "${it.first.discoverLabel()} ${formatScore(it.second)}" },
+        ratingText = preferred?.let { "${it.first.discoverLabel()} ${formatScore(it.second)}" },
         sourceTags = work.activeSourceLabels(ratings),
         completionCost = work.completionCost?.boardLabel(),
         moodRiskTags = work.tags
@@ -458,13 +519,27 @@ internal fun WorkRatings.toFilteredCard(): WorkCardUiModel {
 private fun Work.toRankingCard(source: SourceId, entry: RatingEntry): WorkCardUiModel =
     WorkCardUiModel(
         coverUrl = coverUrl,
-        title = titles.canonical,
+        title = displayTitle(),
         subtitle = subtitleText(),
         type = mediaType.boardLabel(),
         ratingText = "${source.discoverLabel()} ${formatScore(entry.score)} · ${entry.voteCount} 人",
         sourceTags = listOf(source.discoverLabel()),
         completionCost = completionCost?.boardLabel(),
     )
+
+/**
+ * D3：按统一来源优先级 Bangumi→AniList→Jikan→MAL→VNDB 取第一个有评分的源（归一化 0–10 分）。
+ * 取代此前「取最高分源」导致每张卡评分来源不一致的「乱」。无任何有效评分时返回 `null`（不伪造）。
+ */
+private fun preferredSourceScore(ratings: RatingAggregate?): Pair<SourceId, Float>? {
+    val per = ratings?.perSource ?: return null
+    val order = listOf(SourceId.BANGUMI, SourceId.ANILIST, SourceId.JIKAN, SourceId.MAL, SourceId.VNDB)
+    for (src in order) {
+        val entry = per[src] ?: continue
+        if (entry.score > 0f) return src to normalizeScore(src, entry.score)
+    }
+    return null
+}
 
 /** 命中作品「有评分的源」的标签集合（来源标记 RC.05.04）；主源始终在内。 */
 private fun Work.activeSourceLabels(ratings: RatingAggregate?): List<String> {

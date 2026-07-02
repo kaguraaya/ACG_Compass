@@ -3,6 +3,7 @@ package com.acgcompass.feature.onboarding
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.acgcompass.data.datastore.SettingsDataStore
+import com.acgcompass.data.datastore.SettingsState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -42,9 +43,17 @@ class OnboardingViewModel @Inject constructor(
                 initialValue = false,
             )
 
-    /** 用户完成引导：持久化 `onboardingShown = true`，引导不再展示。 */
-    fun onOnboardingComplete() {
+    /**
+     * 用户完成引导（N6）：
+     * - 把 Bangumi API 设为社区反代（[SettingsState.COMMUNITY_PROXY_BANGUMI_API_BASE_URL]）——官方地址在部分网络
+     *   需特殊环境，反代通常可直连；**仅首启写入**（引导只展示一次），不影响已配置官方地址的老用户。
+     * - [consentToProxyToken] 决定是否允许个人 Token 发往该非官方地址（R56）：未同意时仅公共搜索经反代、Token 不发送。
+     * - 持久化 `onboardingShown = true`，引导不再展示。
+     */
+    fun onOnboardingComplete(consentToProxyToken: Boolean) {
         viewModelScope.launch {
+            settingsDataStore.setBangumiApiBaseUrl(SettingsState.COMMUNITY_PROXY_BANGUMI_API_BASE_URL)
+            settingsDataStore.setBangumiNonOfficialTokenConsent(consentToProxyToken)
             settingsDataStore.setOnboardingShown(true)
         }
     }

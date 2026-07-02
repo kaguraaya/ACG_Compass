@@ -69,9 +69,9 @@ class BacklogViewModel @Inject constructor(
         viewModelScope.launch { settingsDataStore.setBacklogGridMode(!gridMode.value) }
     }
 
-    /** I4：把作品移出吃灰馆（回到待补池非吃灰区）。 */
+    /** I4 / C 轮：把作品移出吃灰馆（回到待补池非吃灰区），并还原归档前的 Bangumi 状态。 */
     fun onRestoreFromDust(workId: String) {
-        viewModelScope.launch { backlogRepository.bulk(BulkOp.RESTORE_FROM_DUST_MUSEUM, listOf(workId)) }
+        viewModelScope.launch { restoreFromDustWithStatus(workId) }
     }
 
     /** I4：吃灰馆专用——仅吃灰区条目，按加入时间倒序的卡片流（独立页面消费）。 */
@@ -112,9 +112,9 @@ class BacklogViewModel @Inject constructor(
     private val _selectedIds = MutableStateFlow<Set<String>>(emptySet())
     val selectedIds: StateFlow<Set<String>> = _selectedIds.asStateFlow()
 
-    /** 一键抽番结果（RC.08.06）；`null` 表示当前无抽番弹窗。 */
-    private val _drawResult = MutableStateFlow<DrawResult?>(null)
-    val drawResult: StateFlow<DrawResult?> = _drawResult.asStateFlow()
+    /** 一键抽番结果（RC.08.06）；`null` 表示当前无抽番弹窗。D5：携带作品名展示。 */
+    private val _drawResult = MutableStateFlow<DrawUiResult?>(null)
+    val drawResult: StateFlow<DrawUiResult?> = _drawResult.asStateFlow()
 
     val uiState: StateFlow<UiState<List<BacklogCardItem>>> =
         combine(_filter, _sort) { f, s -> f to s }
@@ -228,10 +228,11 @@ class BacklogViewModel @Inject constructor(
         val ids = _selectedIds.value.toList()
         if (ids.isEmpty()) return
         viewModelScope.launch {
-            backlogRepository.bulk(op, ids)
-            // H5：吃灰池 = Bangumi 搁置。归档进吃灰馆时，把这些条目本地置「搁置」并回写 Bangumi（best-effort）。
-            if (op == BulkOp.ARCHIVE_TO_DUST_MUSEUM) {
-                ids.forEach { archiveToBangumiShelved(it) }
+            when (op) {
+                // H5 / C 轮：吃灰归档与移出都需联动 Bangumi 状态（记住 / 还原 prevStatus），走专用路径。
+                BulkOp.ARCHIVE_TO_DUST_MUSEUM -> ids.forEach { archiveToDustWithStatus(it) }
+                BulkOp.RESTORE_FROM_DUST_MUSEUM -> ids.forEach { restoreFromDustWithStatus(it) }
+                else -> backlogRepository.bulk(op, ids)
             }
             _selectedIds.value = emptySet()
             _selectionMode.value = false
@@ -239,13 +240,16 @@ class BacklogViewModel @Inject constructor(
     }
 
     /**
-     * H5：把作品在本地 user_collections 标记为「搁置」，并在已配置 Bangumi 凭据时回写云端（type=4）。
-     * 已「看过」的作品不因吃灰而回退状态；非数字 id（非 Bangumi 来源）仅本地标记。失败忽略。
+     * H5 / C 轮：把作品移入吃灰馆 = 本地标记「搁置」并回写 Bangumi（type=4），同时**先记住归档前的原状态**
+     * 到待补条目（prevStatus），以便移出吃灰馆时忠实还原（修复「移出后仍是搁置」）。
+     * 已「看过」的作品不因吃灰回退状态；非数字 id（非 Bangumi 来源）仅本地标记。失败忽略（绝不崩溃）。
      */
-    private suspend fun archiveToBangumiShelved(workId: String) {
+    private suspend fun archiveToDustWithStatus(workId: String) {
         runCatching {
             val now = System.currentTimeMillis()
             val existing = userCollectionDao.getByWork(workId)
+            // 先记住归档前原状态（即便无收藏记录也归档，prevStatus=null）。
+            backlogRepository.archiveToDust(workId, existing?.status)
             if (existing?.status == "看过") return@runCatching
             userCollectionDao.upsert(
                 UserCollectionEntity(
@@ -271,6 +275,38 @@ class BacklogViewModel @Inject constructor(
         }
     }
 
+    /**
+     * C 轮：移出吃灰馆时还原归档前的原 Bangumi 状态（本地 + 云端 best-effort），修复「移出后仍是搁置」。
+     * 主操作先把条目移出吃灰区并取回 prevStatus；仅当当前本地状态确为「搁置」（由吃灰造成）且原状态非空非搁置时
+     * 才还原，避免覆盖用户在吃灰期间的手动改动。Bangumi 无删除收藏端点，原状态为空时无法还原（保持现状）。
+     */
+    private suspend fun restoreFromDustWithStatus(workId: String) {
+        val prev = runCatching { backlogRepository.restoreFromDust(workId) }.getOrNull()
+        if (prev == null || prev == "搁置") return
+        runCatching {
+            val existing = userCollectionDao.getByWork(workId) ?: return@runCatching
+            if (existing.status != "搁置") return@runCatching
+            val now = System.currentTimeMillis()
+            userCollectionDao.upsert(existing.copy(status = prev, updatedAt = now))
+            val subjectId = workId.toIntOrNull() ?: return@runCatching
+            val configured =
+                credentialStore.observeStatus().first()[CredentialSourceId.BANGUMI]?.configured == true
+            if (!configured) return@runCatching
+            val type = bangumiTypeOf(prev) ?: return@runCatching
+            bangumiDataSource.updateUserCollection(subjectId = subjectId, type = type)
+        }
+    }
+
+    /** Bangumi 收藏状态名 → type 编码（1想看/2看过/3在看/4搁置/5抛弃）；未知返回 null。 */
+    private fun bangumiTypeOf(status: String): Int? = when (status) {
+        "想看" -> 1
+        "看过" -> 2
+        "在看" -> 3
+        "搁置" -> 4
+        "抛弃" -> 5
+        else -> null
+    }
+
     // endregion
 
     // region 一键抽番（RC.08.06 / Requirements 10.6, 8.4）
@@ -281,7 +317,15 @@ class BacklogViewModel @Inject constructor(
      */
     fun onDraw() {
         viewModelScope.launch {
-            _drawResult.value = backlogRepository.draw(DrawCriteria())
+            val result = backlogRepository.draw(DrawCriteria())
+            // D5：用 workId 反查本地作品名，弹窗展示作品标题而非裸 id。
+            val pickId = result.pick?.workId
+            val title = pickId?.let { id ->
+                runCatching {
+                    workRepository.observeWorks().first().firstOrNull { it.id == id }?.titles?.canonical
+                }.getOrNull()
+            }
+            _drawResult.value = DrawUiResult(workId = pickId, title = title, reason = result.reason)
         }
     }
 

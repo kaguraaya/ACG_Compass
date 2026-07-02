@@ -48,6 +48,14 @@ class BangumiRemoteDataSource @Inject constructor(
     }
 
     /**
+     * 条目详情**原始 DTO**（含社区标签的标注人数 [BangumiTagDto.count]、评分人数、集数、平台等，
+     * `toWork()` 会丢弃这些）。供 work_features 缓存构建（最终版算法），口味画像需要 `count_xk`。
+     */
+    suspend fun getSubjectDto(subjectId: Int): AppResult<BangumiSubjectDto> = runCatchingApp {
+        api.getSubject(subjectId, auth).bodyOrThrow()
+    }
+
+    /**
      * M1（L5）：条目最近短评（next.bgm.tv/p1 公共 JSON 接口）。返回非空短评列表（昵称 + 评分 + 文本）。
      * 失败 / 空返回空列表（best-effort，不伪造，绝不崩溃）。
      */

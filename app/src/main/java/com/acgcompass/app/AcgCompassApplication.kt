@@ -9,6 +9,7 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import coil.request.CachePolicy
 import com.acgcompass.data.datastore.SettingsDataStore
+import com.acgcompass.data.remote.bangumi.BangumiTokenRefresher
 import com.acgcompass.data.sync.SyncScheduler
 import com.acgcompass.data.sync.TasteProfileAutoUpdater
 import dagger.hilt.android.HiltAndroidApp
@@ -18,6 +19,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
@@ -44,6 +46,8 @@ class AcgCompassApplication : Application(), Configuration.Provider, ImageLoader
     @Inject lateinit var syncScheduler: SyncScheduler
 
     @Inject lateinit var tasteProfileAutoUpdater: TasteProfileAutoUpdater
+
+    @Inject lateinit var bangumiTokenRefresher: BangumiTokenRefresher
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -79,6 +83,8 @@ class AcgCompassApplication : Application(), Configuration.Provider, ImageLoader
             .launchIn(appScope)
         // P1-3：个人收藏变化（同步入库 / 详情页改状态 / 加待补池）→ 防抖后自动重算口味画像。
         tasteProfileAutoUpdater.start(appScope)
+        // RC.02 4.6：Bangumi OAuth token 启动期自动续期（best-effort，静默；无 refresh_token 时直接跳过）。
+        appScope.launch { runCatching { bangumiTokenRefresher.refreshIfNeeded() } }
     }
 
     companion object {

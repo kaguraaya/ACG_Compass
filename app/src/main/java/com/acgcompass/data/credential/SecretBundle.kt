@@ -8,7 +8,8 @@ import kotlinx.serialization.Serializable
  * 所有字段均为可选 [String]，按数据源各取所需：
  * - REST token 型（Bangumi / VNDB）：[token]。
  * - AI provider：[apiKey] + [baseUrl] + [model]（自定义 OpenAI 兼容端点，RC.14.01 / RC.02 4.10）。
- * - OAuth 型（MAL 官方）：[clientId] (+ 可选 [clientSecret])。
+ * - OAuth 型（MAL 官方 / Bangumi）：[clientId] (+ [clientSecret])；OAuth 换取的 access token 存入 [token]，
+ *   并另存 [refreshToken] 与 [tokenExpiresAt]（epoch 毫秒）用于到期前自动续期（RC.02 4.6）。
  *
  * **安全约束（RC.00 1.2 / RC.02）**：该类承载明文凭据，**绝不**可写入 Room、DataStore、
  * 默认备份或日志。它仅在 `CredentialStore.put` / `get` 时于内存中存在，落盘时一律由
@@ -25,10 +26,14 @@ data class SecretBundle(
     val clientSecret: String? = null,
     val baseUrl: String? = null,
     val model: String? = null,
+    /** OAuth 续期令牌（与 [token] 同源换取）。仅 OAuth 流程写入，手动粘贴 Token 时为空。 */
+    val refreshToken: String? = null,
+    /** OAuth access token 过期时刻（epoch 毫秒）。用于启动时判断是否需要提前续期。 */
+    val tokenExpiresAt: Long? = null,
 ) {
-    /** 是否含有任意一项实际凭据值（用于派生 `configured` 元数据）。`baseUrl`/`model` 不算敏感凭据但计入「已配置」。 */
+    /** 是否含有任意一项实际凭据值（用于派生 `configured` 元数据）。`baseUrl`/`model`/过期时刻 不算敏感凭据但计入「已配置」。 */
     fun hasAnyValue(): Boolean =
-        listOf(token, apiKey, clientId, clientSecret, baseUrl, model)
+        listOf(token, apiKey, clientId, clientSecret, baseUrl, model, refreshToken)
             .any { !it.isNullOrBlank() }
 
     /** 生成脱敏视图：敏感字段掩码（仅保留末尾 ≤4 字符），非敏感字段（baseUrl/model）原样保留。 */

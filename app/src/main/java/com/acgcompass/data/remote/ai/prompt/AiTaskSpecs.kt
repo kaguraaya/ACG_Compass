@@ -34,17 +34,25 @@ data class AiTaskSpec(
  */
 object AiTaskSpecs {
 
-    /** 解析任务的提示词与目标 schema。 */
+    /**
+     * 解析任务的提示词与目标 schema。
+     *
+     * [AiTaskSpec.maxOutputTokens] 取值偏大：实测部分模型（如 `deepseek-v4-flash` 等**推理型**模型）的
+     * 思维链 token **计入 completion 预算**——极简输入即可产生 200+ reasoning_tokens；详情页长输入下
+     * 「思维链 + 完整结构化 JSON」极易超出旧上限（雷达 700 / 匹配 500）被截断（finish=length）→ JSON 不完整
+     * → 解析失败 → 回退本地规则（即用户看到的红字）。故为结构化任务预留充足输出空间。
+     * 注：`max_tokens` 仅为**上限**，非推理模型用不到不会多耗 token / 多花钱（RC.14.03/05）。
+     */
     fun specFor(task: AiTask<*>): AiTaskSpec = when (task) {
         is AiTask.SpoilerRadar -> AiTaskSpec(
             systemPrompt = spoilerRadarPrompt(),
             responseFormat = AiResponseFormat.JsonSchema("spoiler_radar", spoilerRadarSchema()),
-            maxOutputTokens = 700,
+            maxOutputTokens = 1600,
         )
         is AiTask.TasteProfile -> AiTaskSpec(
             systemPrompt = tasteProfilePrompt(),
             responseFormat = AiResponseFormat.JsonSchema("taste_profile", tasteProfileSchema()),
-            maxOutputTokens = 700,
+            maxOutputTokens = 1600,
         )
         is AiTask.TonightRecommender -> AiTaskSpec(
             systemPrompt = recommenderPrompt(task.indecisive),
@@ -52,17 +60,17 @@ object AiTaskSpecs {
                 name = "tonight_recommender",
                 schema = recommenderSchema(task.indecisive),
             ),
-            maxOutputTokens = 500,
+            maxOutputTokens = 1200,
         )
         is AiTask.RouteMap -> AiTaskSpec(
             systemPrompt = routeMapPrompt(),
             responseFormat = AiResponseFormat.JsonSchema("route_map", routeMapSchema()),
-            maxOutputTokens = 900,
+            maxOutputTokens = 2000,
         )
         is AiTask.TasteMatch -> AiTaskSpec(
             systemPrompt = tasteMatchPrompt(),
             responseFormat = AiResponseFormat.JsonSchema("taste_match", tasteMatchSchema()),
-            maxOutputTokens = 500,
+            maxOutputTokens = 1200,
         )
     }
 

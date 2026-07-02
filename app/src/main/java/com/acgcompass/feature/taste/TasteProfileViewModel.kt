@@ -7,6 +7,7 @@ import com.acgcompass.core.ui.Cta
 import com.acgcompass.core.ui.UiState
 import com.acgcompass.data.local.dao.UserCollectionDao
 import com.acgcompass.data.sync.BangumiSyncManager
+import com.acgcompass.data.taste.TasteEngine
 import com.acgcompass.domain.model.TasteProfile
 import com.acgcompass.domain.repository.TasteProfileRepository
 import com.acgcompass.domain.usecase.TasteInputRecord
@@ -33,6 +34,7 @@ class TasteProfileViewModel @Inject constructor(
     private val repository: TasteProfileRepository,
     private val bangumiSyncManager: BangumiSyncManager,
     private val userCollectionDao: UserCollectionDao,
+    private val tasteEngine: TasteEngine,
 ) : ViewModel() {
 
     private val _message = MutableStateFlow<String?>(null)
@@ -88,7 +90,11 @@ class TasteProfileViewModel @Inject constructor(
                             _message.value = "Bangumi 暂无可用于画像的收藏 / 评分数据"
                         } else {
                             when (repository.importAndCompute(records)) {
-                                is AppResult.Success -> _message.value = "已导入 ${records.size} 条记录并刷新口味画像"
+                                is AppResult.Success -> {
+                                    _message.value = "已导入 ${records.size} 条记录并刷新口味画像"
+                                    // 最终版 12 维引擎：联网补齐 work_features（社区标签计数 + staff/角色/CV）并构建高级画像。
+                                    runCatching { tasteEngine.refreshFull() }
+                                }
                                 is AppResult.Failure -> _message.value = "画像计算失败，请稍后再试"
                             }
                         }
@@ -98,6 +104,32 @@ class TasteProfileViewModel @Inject constructor(
                 throw e
             } catch (_: Throwable) {
                 _message.value = "导入失败，请稍后再试"
+            } finally {
+                _importing.value = false
+            }
+        }
+    }
+
+    /**
+     * A4：手动「重新分析」入口——用当前本地收藏重算统计画像 + 联网补全 12 维引擎特征（无需重新同步 Bangumi）。
+     * 供画像页按钮触发：评分 / 标签变动后一键刷新口味画像，以及详情页 / 今晚看什么 / 探索队列共用的匹配画像。
+     */
+    fun onRefreshAnalysis() {
+        if (_importing.value) return
+        _importing.value = true
+        viewModelScope.launch {
+            try {
+                when (repository.recomputeFromLocal()) {
+                    is AppResult.Success -> {
+                        runCatching { tasteEngine.refreshFull() }
+                        _message.value = "已重新分析口味画像"
+                    }
+                    is AppResult.Failure -> _message.value = "重新分析失败，请稍后再试"
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                _message.value = "重新分析失败，请稍后再试"
             } finally {
                 _importing.value = false
             }

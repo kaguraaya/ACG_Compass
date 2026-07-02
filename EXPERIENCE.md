@@ -23,6 +23,12 @@
 | 8 | 榜单滑到约第 20 名即提示「已到底部」，无法加载第 61+ 名 | `canLoadMore = 本页返回数 >= limit`，但 Bangumi 实验性 `search/subjects` 某页可能返回少于 limit 条（即便后面还有），被误判到底 | `searchRankedSubjects` 透出分页 `total`（新增 `BangumiRankedPage`/`RankingPage`）；上层 `offset += 本页返回数`、`canLoadMore = 本页非空 && offset < total` | 分页「是否到底」应以服务端 `total`/游标判定，**绝不**用「本页数 == pageSize」近似；实验性 API 尤其会短返回 | RC.05.04 |
 | 9 | 「今晚看什么·想看的标签」恒显示「暂无可用标签」、题材筛选筛不出内容、点推荐显示「暂无内容」 | 领域 `Work.tags` 由 `toWork()` 正确映射，但持久化层丢标签：`persistMatches`/`BangumiSyncManager` 落库只写 `WorkEntity`（不含 tags），`observeWorks` 又以 `toDomain(tags=emptyList())` 读出 → 候选池/facet 作品标签恒空 | 新增共享 `WorkTagWriter` 在两条入库路径写 `tags`+`work_tags`（统一主键 `category:name` 避免唯一索引冲突）；`observeWorks` 经新增 `TagDao.getTagsForWorks` 批量回填标签 | 领域模型「有字段」≠「已持久化」：跨「写实体」「读实体」两端都要核对字段是否真正落库/读出；连接表型字段最易在 `toEntity`/`toDomain` 边界被静默丢弃 | RC.05.06 / RC.07 |
 | 10 | 单元测试全部报 `Could not execute test class … ClassNotFoundException`（含最简 `SanityTest`，`clean` 后依旧），但 `compileDebugKotlin` 成功且 `.class` 已生成 | Gradle 测试 worker（fork JVM）运行时 classpath 无法解析已编译测试类；高度疑似工程路径含**空格 + 非 ASCII**（`ACG Compass de分支`）触发 Windows 下 test-worker classpath/pathing-jar 解析失败；叠加 `--tests` 过滤更易复现（Kotest 下尤甚） | 新算法暂以 `compileDebugKotlin` 全量编译 + 手算阈值验证；测试执行需在**无空格/无中文**路径（或 CI）运行，或排查 Gradle test worker classpath 配置 | 验证不能只靠 `--tests <Class>`（Kotest 会 ClassNotFound）；测试目录避免空格与非 ASCII；严格区分「编译 classpath OK」与「测试 fork 运行时 classpath」 | RC.00 / RC.08 |
+| 11 | 主源 `:app:compileDebugKotlin` 通过，但 `:app:compileDebugUnitTestKotlin` 报 `FakeBacklogRepository is not abstract and does not implement archiveToDust` | `BacklogRepository` 在「吃灰馆移出还原」一轮新增 `archiveToDust`/`restoreFromDust`，生产实现已更新，但测试里的 `FakeBacklogRepository`（`RouteMapRepositoryImplTest`）未同步实现 → 仅测试编译单元报错 | 给该 fake 补 `archiveToDust`/`restoreFromDust` 无操作实现 | 接口新增方法后必须跑 `:app:compileDebugUnitTestKotlin`（不止主源编译），以触发所有 fake/实现的完整性校验；新增接口方法时全局搜 `: 接口名` 同步所有实现 | RC.08 / RC.00 |
+| 12 | 详情页口味匹配度「都挤在 55–65」、明显不合口味的作品也给高分；今晚看什么会推社区低分/低匹配作品 | 旧 `PersonalTasteScorer` 仅做标签重合的线性加权，输出未做分布校准也未拉开差距，区分度低；今晚看什么用其打分且缺质量护栏 | 落地最终版 12 维引擎：正负偏好向量 + 题材组合挖掘 + **温度化 logistic 校准**（`μ=median(z)`、`τ=max(0.18,std(z))`）+ **分数拉开** `50+sign·min(45,1.18·|100p-50|)→[5,95]`；今晚看什么改用引擎精排并加「社区分≥6.0 + 口味下限」双护栏与 14 天重复冷却；引擎与旧打分并存，缺特征/缺画像回退不退化 | 评分类输出要先校准到合理分布再拉开区分度，别用未校准线性分直接展示；改推荐排序口径时同步补「质量下限」护栏，避免为「个性化」牺牲基本质量 | RC.10.03 / RC.11 |
+| 13 | 要「像 animeko 那样」一键 Bangumi 登录 + 自动刷新，但本项目无后端 | animeko 登录依赖其**自建后端中转站**（`auth.myani.org` 等）保管 `client_secret` 并处理回调；联网核验确认 Bangumi 令牌端点**强制 `client_secret`、不支持 PKCE**，纯客户端无法做到「零内置也能一键登录」 | **内置共享应用**：开发者注册一次，`client_id/secret` 经 `local.properties`(gitignored)→`BuildConfig`→Hilt `@Named` 注入，所有用户共用、仅需点登录（`requireClientId/Secret` 取「自填 ?: 内置」，缺省回退自填）；回调用 **WebView 拦截自定义 scheme**；续期放**启动期** `BangumiTokenRefresher`、避开 `AuthInterceptor` 依赖环 | OAuth「无缝体验」先核验是否依赖对方后端 + 目标是否支持 PKCE；无后端要一键登录只能内置共享 App（secret 仅放 gitignored 文件、属 native OAuth 已知权衡 RFC 8252），但**用户 token 仍各自获取**、不破坏「零内置用户凭据」 | RC.02 4.6 / RC.00 |
+| 14 | 发现页「评分差异」恒空 / 极少 | 该榜需单作品 ≥2 个有效来源评分，但发现页批量为性能只读本地缓存（K9 `aggregateRatingsCached`），公共池作品多半仅主源一条评分 → `scoreSpread` 因有效源 <2 恒返回 `null` | 进入差异页时按需触发**有预算上限**的回填：对「仅 1 有效源、评分人数最多」的前 12 部调用既有 `aggregateRatings`（→`crossValidateRatings` 按标题跨源匹配落第二源），写回后差异榜经 `observeWorks` 自动刷新；先 `first { 非空 }`+超时等公共池就绪再选目标，避免「池未就绪→0 目标→提前 latch」 | 「批量只读缓存」与「单作品联网聚合」是两条数据路径；依赖多源的视图必须显式触发回填，且 best-effort + 预算上限 + 失败吞掉，复用既有交叉验证而非新造 | RC.05.05 / RC.07 |
+| 15 | 需求列「A4 AI 画像分析」要用 LLM 校正标签分类，但代码库无任何 AI 调用基础设施 | 12 维「引擎」是纯统计（`domain/taste/*`），项目从未接入 LLM 客户端/密钥/提示词；硬上 AI 子系统风险大且非本批核心 | 交付**可落地且诚实**的版本：画像页「重新分析」按钮 = `recomputeFromLocal()` 重算统计画像 + `TasteEngine.refreshFull()` 联网补全 12 维特征（无需重新同步）；LLM 标签分类校正明确**延后为独立专项** | 文档写「AI」前先核验是否已有 AI 基础设施；无则区分「可立即交付的手动入口」与「需新建子系统的 AI 能力」，不为对齐措辞而伪造未实现的 AI | RC.10 / RC.00 |
+| 16 | 「今晚看什么」多选标签时推荐偏题（选催泪推航海王、选校园恋爱日常推灵能百分百） | 旧意图匹配用「命中标签绝对数」线性加权，单个强标签即可拿高分，未要求**同时覆盖**多意图，也无主气质冲突惩罚 | 改 soft-AND 覆盖率：意图覆盖 = 命中意图占所选意图比例（几何覆盖 + minHit），关键意图缺失/主气质冲突扣分、意图不匹配封顶；`intentFit` 权重提到 0.32，理由展示覆盖率 | 多条件检索的相关性应建模为「覆盖率（AND 倾向）」而非「命中计数（OR 倾向）」，并对明显冲突显式惩罚 | RC.11 |
 
 ## 详细记录
 
@@ -215,3 +221,16 @@
 
 ### I4 吃灰馆
 - 独立页 `DustMuseumScreen` 复用 `BacklogViewModel.dustMuseumCards`（filter inDustMuseum=true、按吃灰天数倒序）；逐条「移出吃灰馆」= bulk(RESTORE_FROM_DUST_MUSEUM)；入口在待补池顶栏。
+
+
+## 0.15.0 上手实测续修（N1–N12）根因与规避
+
+| 现象 | 根因 | 修复 | 规避 / 教训 |
+|---|---|---|---|
+| 评分差异榜同一部番出现两条（中文名 + 罗马音名），都显示同一 Jikan 分 | 两条未合并的同番行（不同源 / 不同语言标题）都进榜，且 D9 交叉验证给两者挂了同一 Jikan 分 | `buildScoreDiffBoard` 前置 `dedupeSameWork`：按标题变体（canonical/cn/ja/romaji/en/aliases 归一化，长度≥4）交集**聚类去重**，每簇留 Bangumi/中文代表 | 展示层去重用「标题变体交集」跨语言聚类；不臆造合并分值以免误并邻季导致分数错配 |
+| 口味匹配分普遍偏低（连已评高分作品也低） | 已评分作品未把「个人评分」作为口味锚点；部分作品无特征向量 | 接线个人评分锚定 + 对全部已评分作品补齐特征 | 已评分作品应以真实评分为强信号，不能只靠标签重算 |
+| 今晚看什么进入即卡 / 首屏联网 | 热路径逐作品联网补特征 | 热路径只读本地缓存 `budget=0`，画像后台重建 | 首屏路径严禁同步联网；联网补齐放后台 |
+| 口味下限设「关闭」仍过滤掉低匹配作品 | 「关闭」(0) 被强制回落 0.45，形同虚设 | `tasteMatchThreshold=0` 时**不**施加下限；候选不足逐级放宽；标签口径与画像统一 | 「关闭」必须真关闭（WYSIWYG）；默认给 0.4 质量档而非硬编码兜底 |
+| 首启需特殊网络才能用 Bangumi | 默认官方 `api.bgm.tv` 部分网络不可达 | 首启引导默认设社区反代 `bgmapi.anibt.net` + 说明 + 「Token 经反代」同意勾选（仅首启写入） | 反代默认只改公共访问；个人 Token 经非官方需显式同意，且不影响老用户 |
+| 主线跳转的关联条目详情只有 Bangumi 评分 | 关联条目仅 Bangumi 源；`crossValidateRatings` 按**绝对相似度阈值**逐源匹配，续作 / 跨语言标题易漏配 | 新增 `enrichViaCrossSourceSearch`：复用搜索页「多源搜索 + 季度感知聚类（`sameWork`/`clusterMatches`）」把同簇其他源评分挂到本 workId | 单源作品补齐应复用「聚类」而非绝对阈值逐源匹配；聚类季度感知，避免把邻季评分挂错 |
+| 文档误记「无 AI 基础设施」 | 0.14.0 收尾把 N3 延后写成「无 AI 基础设施」 | 更正：项目实有完整 AI 管线（AiEngine/AiTask 五类/OpenAiCompatibleProvider…）；N3 仅为待接入新任务类型 | 延后原因要写准确，避免误导后续排期 |

@@ -9,6 +9,7 @@ import com.acgcompass.domain.matching.clusterMatches
 import com.acgcompass.domain.matching.representativeOf
 import com.acgcompass.domain.model.CompletionCost
 import com.acgcompass.domain.model.MediaType
+import com.acgcompass.domain.model.displayTitle
 import com.acgcompass.domain.model.SourceId
 import com.acgcompass.domain.model.SourceRef
 import com.acgcompass.domain.model.Work
@@ -184,7 +185,7 @@ private fun List<WorkMatch>.toMergedItem(): DiscoverResultItem {
     val tags = sourceLabels + confidenceLabel(bestConfidence)
     val card = WorkCardUiModel(
         coverUrl = rep.work.coverUrl ?: byConfidence.firstNotNullOfOrNull { it.work.coverUrl },
-        title = rep.work.titles.canonical,
+        title = rep.work.displayTitle(),
         subtitle = workSubtitle(rep.work),
         type = rep.work.mediaType.discoverLabel(),
         ratingText = null,

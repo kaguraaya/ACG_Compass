@@ -212,6 +212,23 @@ class BacklogRepositoryImpl @Inject constructor(
         backlogDao.update(transform(existing))
     }
 
+    // --- 吃灰馆归档 / 还原（C 轮：记住并还原归档前状态） -------------------
+
+    override suspend fun archiveToDust(workId: String, prevStatus: String?) {
+        withContext(dispatchers.io) {
+            val existing = backlogDao.getByWork(workId) ?: return@withContext
+            backlogDao.update(existing.copy(inDustMuseum = true, prevStatus = prevStatus))
+        }
+    }
+
+    override suspend fun restoreFromDust(workId: String): String? =
+        withContext(dispatchers.io) {
+            val existing = backlogDao.getByWork(workId) ?: return@withContext null
+            val prev = existing.prevStatus
+            backlogDao.update(existing.copy(inDustMuseum = false, prevStatus = null))
+            prev
+        }
+
     // --- draw（一键抽番，带理由） ------------------------------------------
 
     override suspend fun draw(criteria: DrawCriteria): DrawResult =

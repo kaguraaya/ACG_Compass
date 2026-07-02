@@ -10,6 +10,7 @@ import com.acgcompass.domain.model.Titles
 import com.acgcompass.domain.model.Units
 import com.acgcompass.domain.model.Work
 import com.acgcompass.domain.model.WorkMatch
+import com.acgcompass.domain.usecase.TasteTagTaxonomy
 
 /**
  * Bangumi DTO → 领域模型映射（RC.01 3.7 / RC.07）。
@@ -62,7 +63,8 @@ internal fun deriveBangumiStatus(date: String?, episodes: Int?): ReleaseStatus {
 /** 选取封面 URL：优先 large，其次 common / medium / grid / small；全无返回 `null`。 */
 internal fun BangumiImagesDto?.preferredCover(): String? {
     if (this == null) return null
-    return large ?: common ?: medium ?: grid ?: small
+    // D4：Bangumi 图床常返回 http://，Android 默认禁明文 → 升级 https，确保封面可加载（修药屋少女/JOJO 等本地无封面）。
+    return (large ?: common ?: medium ?: grid ?: small)?.toHttps()
 }
 
 /**
@@ -104,6 +106,7 @@ fun BangumiSubjectDto.toWork(): Work {
         id = id.toString(),
         titles = Titles(
             canonical = canonical,
+            cn = chinese,
             ja = original,
         ),
         mediaType = mapBangumiMediaType(type),
@@ -115,9 +118,14 @@ fun BangumiSubjectDto.toWork(): Work {
         ),
         coverUrl = images.preferredCover(),
         primarySource = SourceId.BANGUMI,
-        // H13：纳入 Bangumi 社区标签（取前 15，TagCategory.CONTENT），用于详情展示与口味分析；
-        // 不混入 MOOD/RISK 统计，保持口味画像分类纯净。
-        tags = tags.take(15).toDomainTags(TagCategory.CONTENT),
+        // H13 / C 轮：纳入 Bangumi 社区标签用于详情展示与题材筛选 / 口味匹配，但**只保留题材**
+        // （[TasteTagTaxonomy.isSelectableGenre] 白名单），剔除人物名 / 声优 / 梗 / 厂商 / 年份等噪声——
+        // 否则这些高标注噪声会挤占名额、污染发现页筛选并稀释口味匹配。按标注人数降序取前 15。
+        tags = tags
+            .sortedByDescending { it.count }
+            .filter { TasteTagTaxonomy.isSelectableGenre(it.name) }
+            .take(15)
+            .toDomainTags(TagCategory.CONTENT),
         summary = summary.takeIf { it.isNotBlank() },
         airDate = date?.trim()?.takeIf { it.length >= 10 }?.substring(0, 10),
     )
@@ -148,6 +156,7 @@ fun BangumiLegacySubjectDto.toWork(): Work {
         id = id.toString(),
         titles = Titles(
             canonical = cn ?: ja ?: id.toString(),
+            cn = cn,
             ja = ja,
         ),
         mediaType = mapBangumiMediaType(type),

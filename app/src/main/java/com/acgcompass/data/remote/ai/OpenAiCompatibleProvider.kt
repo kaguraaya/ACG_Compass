@@ -29,6 +29,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
  * @property id                provider 标识（DI map 键）。
  * @property defaultBaseUrl    缺省 baseUrl；`null` 表示必须由用户提供（自定义兼容端点）。
  * @property structuredOutput  是否支持服务端 `json_schema` 严格结构化输出。
+ * @property disableThinking   是否默认关闭「思考模式」（DeepSeek 混合思考模型默认开启，会空耗 token 并截断结构化输出）。
  */
 class OpenAiCompatibleProvider(
     override val id: ProviderId,
@@ -37,6 +38,9 @@ class OpenAiCompatibleProvider(
     private val credentialSource: AiCredentialSource,
     private val httpCaller: AiHttpCaller,
     private val json: Json,
+    // R-new4：是否默认关闭「思考模式」。混合思考模型（DeepSeek deepseek-v4-flash/pro）默认 thinking=enabled，
+    // 思维链 token 计入 completion 预算，使结构化任务易被截断/变慢/变贵；本类任务无需思考，故对这类 provider 默认关闭。
+    private val disableThinking: Boolean = false,
 ) : AiProvider {
 
     override fun supportsStructuredOutput(): Boolean = structuredOutput
@@ -86,6 +90,12 @@ class OpenAiCompatibleProvider(
                 }
             }
             responseFormatJson(req.responseFormat)?.let { put("response_format", it) }
+            // R-new4：关闭思考模式（DeepSeek 扩展参数 thinking，顺应放请求体顶层）。混合思考模型默认开启思考，
+            // 思维链 token 计入 completion 预算 → 结构化任务易被截断/变慢/变贵。仅对声明支持的 provider 注入，
+            // 避免被不认识该字段的端点（如 OpenAI）拒绝（实测关闭后 reasoning_tokens 降为 0、JSON 完整）。
+            if (disableThinking) {
+                putJsonObject("thinking") { put("type", "disabled") }
+            }
         }
 
     /**

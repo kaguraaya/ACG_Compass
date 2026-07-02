@@ -23,6 +23,23 @@ object NetworkConstants {
      */
     const val BANGUMI_NEXT_BASE_URL: String = "https://next.bgm.tv/p1/"
 
+    /**
+     * Bangumi OAuth2 授权 / 令牌端点 Base（P0，用户自助在 `bgm.tv/dev/app` 注册应用后启用）：
+     * - 授权：`GET {base}authorize`（在应用内 WebView 打开，引导用户登录授权）；
+     * - 令牌：`POST {base}access_token`（`application/x-www-form-urlencoded`，换 / 刷新 token）。
+     *
+     * 固定官方地址，**不**随 Bangumi 反代设置改写（令牌端点请求不打 Bangumi `@Tag`，
+     * 故 [com.acgcompass.core.network.interceptor.BangumiBaseUrlInterceptor] 不会改写其 host）。
+     * 不含任何 client id / secret —— 由用户在 `CredentialStore` 配置后于运行时拼接（RC.00 / RC.02 4.8）。
+     */
+    const val BANGUMI_OAUTH_BASE_URL: String = "https://bangumi.tv/oauth/"
+
+    /**
+     * Bangumi OAuth 回调地址（自定义 scheme）。由授权 WebView 内部拦截，**无需**系统 deep-link / Manifest 注册。
+     * 用户须在 `bgm.tv/dev/app` 应用后台将「回调地址」设置为**完全相同**的此值，否则 Bangumi 拒绝换取 token。
+     */
+    const val BANGUMI_OAUTH_REDIRECT_URI: String = "acgcompass://oauth/bangumi/callback"
+
     /** AniList（P1，GraphQL，公共查询免鉴权）。 */
     const val ANILIST_GRAPHQL_URL: String = "https://graphql.anilist.co"
 

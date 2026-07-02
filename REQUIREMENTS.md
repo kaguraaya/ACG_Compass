@@ -25,7 +25,61 @@
 - **总体**：P0/P1/P2 功能实现全部完成；`:app:compileDebugKotlin` 与 `:app:testDebugUnitTest` 均通过（318 个单元/属性测试全绿）。
 - **已完成（已实现并通过自检）**：RC.00（全局隐私/安全、文档制度）、RC.01（五源接入：Bangumi/AniList/Jikan/MAL/VNDB + 降级编排）、RC.02（设置/凭据）、RC.03（导航/首启/七态）、RC.04（首页今日决策中心 + 同步提醒/补番签）、RC.05（搜索/发现/榜单/差异榜/筛选）、RC.06（批量导入/被安利计数/去重）、RC.07（详情页全分区 + 雷达接入）、RC.08（待补池/批量操作/吃灰馆/一键抽番）、RC.09（无剧透雷达 + AI 增强 + 来源标注）、RC.10（口味画像 + 评分习惯/称号/黑洞/匹配度）、RC.11（推荐器三推荐 + 不准纠结/期末保护/深夜提醒）、RC.12（路线图 + 推荐顺序/路线待确认）、RC.13（时光机快照/差异 + 月/年报告时间线）、RC.14（AI Provider/schema/修复/剧透过滤/成本确认）、RC.15（我的页/统计/隐私入口/关于页）、RC.16（备份默认零凭据/合并不覆盖 + CSV 导出 + 跨账号合并结构预留）、RC.17（数据本地化/不伪造）、RC.18（趣味功能：安利债务/吃灰博物馆/人格/情绪风险）。
 - **约束达成**：代码/资源/测试/日志零硬编码密钥（RC.00 1.2）；导出默认 `credentials=null` 且脱敏（RC.00 1.5 / 18.1）；缺失数据显示「暂无数据」绝不伪造（RC.17.4）；强制无剧透（RC.09.05）；迁移升级前自动备份、禁用破坏性回退（RC.00 1.8）。
+- **0.13.0 增量（算法重做 + 体验修复 + Bangumi 一键登录）**：12 维口味引擎 + 四阶段推荐落地；详情页画像冷启动就绪（`TasteEngine.ensureReady`，修匹配度阈值/「暂无可匹配标签」时机）；季度评分错配修复（`sameWork` 季度冲突 + 评分锚定 `workId`）；DeepSeek 关思考模式 + 增大 `max_tokens` 修 AI 结构化输出；启动缓存补齐到 1000；推荐器切候选池保留已选标签；搜索页历史搜索；评分保存后 Snackbar 提示「口味画像已自动更新」；**Bangumi OAuth 应用内 WebView 一键登录（内置共享应用，最终用户无需注册）+ 启动期 token 自动续期**（RC.02 4.6，纯客户端无后端，详见 DEVELOPMENT.md TD-13.1）。
+- **版本号规则（自 0.13.0 起）**：弃用历史的 `-R`（轮次序号）后缀，改用语义化递增——小修小补 `+0.0.1`、较大功能 `+0.1.0`、重大里程碑 `+1.0.0`；`versionCode` 单调递增。
 - **剩余为可选项**：部分 `*` 标记的补充测试（集成/UI/快照）与最终全量 instrumentation 验证；需安装 Android SDK 后执行 `:app:assembleDebug` 产出可安装 APK。
+
+## 0.14.0 需求批次（算法 v2 + 体验修复 + 探索队列）
+
+> 依据《算法文档》三篇（最终版算法开发文档 / 推荐算法修订 / 探索队列功能文档）整理。**执行顺序**：D+E（体验/OAuth）→ A（口味）→ B（今晚看什么）→ C（探索队列）→ F（文档+打包）。
+
+### A. 口味匹配算法转正（RC.10，最终版算法文档「口味匹配度最终算法」）
+- **A1 12 维引擎转正**：仓库已含完整 12 维引擎（`domain/taste/*`），但详情页常因取不到 `WorkFeature` 回退到只看题材的旧版 `PersonalTasteScorer`，导致分数与文档不符、出现「暂无可匹配标签」。让 12 维引擎成为详情页/推荐主路径，确保候选 `WorkFeature`（含分类标签 + staff/CV/角色）可靠获取。
+- **A2 不可用四态**：「暂无可匹配标签」按文档区分 `画像未生成 / 作品无标签 / 样本不足 / 数据同步中`，不再笼统一句。
+- **A3 全标签入算、前端只显题材**：声优/staff/XP/角色/组合全部参与计算（引擎已支持），详情页理由仍只呈现题材类，避免太乱。
+- **A4 口味画像「重新分析」手动入口（本批已交付）**：画像页加按钮「重新分析口味画像（联网补全 12 维特征）」——`recomputeFromLocal()` 重算统计画像 + `TasteEngine.refreshFull()` 联网补齐 `work_features`（社区标签计数 + staff/CV/角色），无需重新同步 Bangumi；评分更新时本地画像照常自动更新。
+  - **延后为独立专项（需新建子系统）**：原计划「AI 标签分类校正」（用 LLM 判断标签归 题材/声优/XP/staff/梗 哪一维）——当前代码库**无任何 LLM/AI 调用基础设施**，需新建（API 客户端 + 密钥管理 + 提示词），不在本批范围。其「AI 仅做标签分类、**不改算法/权重**」的边界不变。
+
+### B. 今晚看什么意图匹配 VNext（RC.11，推荐算法修订）
+- **B1**：UI 标签→`IntentTagBundle`（required/synonym/weak/conflict）；`tagRel` 代表性（count/rank/长篇情绪稀释）；soft-AND 多意图覆盖（coverage + 几何覆盖 + minHit）；关键意图缺失惩罚；组合模板（校园恋爱日常喜剧/催泪）；主气质冲突惩罚；意图不匹配封顶。`intentFit` 权重 0.18→0.32。解决「选催泪推航海王 / 选校园恋爱日常推灵能百分百」。
+
+### C. 探索队列（新增 RC.19，探索队列功能文档）
+- **C1 入口 + 卡片**：发现页右上角入口→独立页；10 张卡堆叠（可见 3 层）、点击翻面、**左滑加待补池 / 右滑暂不感兴趣**、结束总结页。
+- **C2 队列算法**：`exploreScore`（taste/novelty/quality/adjacent/diversity/franchise/freshness − exposure/reject/duplicate）；候选硬过滤（看过/在看/待补/冷却/曝光）；「稳准 4 + 相邻 2 + 公共 1 + 冷门 1 + 系列 1 + 惊喜 1」组成；同系列每组 ≤1；队列节奏排序。
+- **C3 反馈闭环**：左滑/右滑冷却（60/90/120/180 天分级）、连续删同类→本轮短期题材降权、待补池联动、`recommendation_exposure` 曝光记录。
+
+### D. 体验修复（P0）
+- **D1**：Bangumi 用户名「暂无数据」——`SettingsViewModel.toCardState` 的 `username=null` 硬编码；登录/同步后取 `/v0/me` 持久化并显示。
+- **D2**：筛选/评分差异/榜单卡片**统一中文标题**（`Titles` 增中文字段，Bangumi 映射填 `name_cn`，卡片中文优先）。
+- **D3**：卡片**评分源统一 Bangumi 优先**（不再 `maxByOrNull` 取最高分源）。
+- **D4**：封面缺失（药屋少女/JOJO）——修公共池/榜单入库 `coverUrl` 映射。
+- **D5**：一键抽番弹窗显示**作品名**而非 `workId`。
+- **D6**：筛选页筛选/排序面板**可滚动**，不挤压下方列表。
+- **D7**：搜索页空态显示**最近浏览作品**（你说的「上次点开的条目」）+ 保留搜索词历史。
+- **D8**：公共发现池**后台持续加载**（不只筛选页停留才更新），加载完稳定。
+- **D9**：评分差异——公共池作品跨源评分回填，使该栏有数据。
+
+### E. Bangumi OAuth
+- **E1**：OAuth 域名 `bgm.tv`→`bangumi.tv`（更稳）。**E2**：内置凭据缺失（开源仓库未上传 secret）时明确提示「未内置应用，请自填或联系作者」。**E3**：登录/填 Token 导引说明做到位。
+
+### F. 收尾
+- **F1** 更新三份文档（REQUIREMENTS/DEVELOPMENT/EXPERIENCE）；**F2** 版本 `0.13.0`→`0.14.0`（`versionCode 13→14`，大更新）+ `compileDebugKotlin` 通过 + `assembleDebug` 出 APK。
+
+> **交付状态（本批）**：A1/A2/A3、B1、C1/C2/C3、D1–D9、E1，以及 A4（口味画像「重新分析」手动入口）均已实现且 `:app:compileDebugKotlin` **BUILD SUCCESSFUL**。其中 **D8** 实交付为「进入榜单/差异/筛选页按需加载一次公共池并缓存稳定」（非字面「持续后台加载」，避免无谓流量）；**D9** 为「进入差异页按预算（top-12）回填第二来源评分」。A4 的 **LLM 标签分类校正**延后为独立专项（**更正：项目实有完整 AI 调用管线，非缺基础设施——见 0.15.0 批次 N3 说明**）。测试验证以**编译**为准——本机工程路径含空格+中文导致 Gradle test worker `ClassNotFound`（见 `EXPERIENCE.md` 第 10 条），最终交付以 `assembleDebug` 产物为准。
+
+## 0.15.0 需求批次（体验修复 + 首启默认 + 详情跨源，N1–N12）
+
+> 依据 0.14.0 上手实测反馈整理；均已 `:app:compileDebugKotlin` 与 `:app:assembleDebug` **BUILD SUCCESSFUL**。版本 `0.14.0`→`0.15.0`（`versionCode 14→15`）。
+
+- **N1 评分差异同番去重**：评分差异榜同一部番出现「中文名 + 罗马音名」两条、且因 D9 交叉验证都挂同一 Jikan 分。改为按标题变体（canonical/cn/ja/romaji/en/aliases 归一化，长度≥4）交集聚类，每簇仅保留 Bangumi/中文代表；不臆造合并分值（避免误并邻季导致分数错配）。（`feature/discover/DiscoverBoards.kt`）
+- **N2 口味分过低（根因）**：已评分作品未把「个人评分」作为口味匹配锚点、部分作品无特征。已接线个人评分锚定并对全评分作品补齐特征。（`domain/taste`、`PersonalTasteScorer`）
+- **N4 推荐器热路径不联网**：热路径只读本地缓存 + 后台重建画像，`budget=0` 不阻塞首屏。（`feature/recommender/RecommenderViewModel`）
+- **N5 口味下限「关闭」真关闭**：`tasteMatchThreshold=0` 时推荐器**不**施加口味下限（此前被强制回落 0.45 形同虚设）；候选不足逐级兜底放宽；标签口径与画像统一。默认阈值改 `0.4`（质量默认，避免推荐 30% 低匹配）。
+- **N6 首启默认 + 新手引导**：默认启用 Jikan / VNDB（成人内容默认关）；首启引导默认把 Bangumi API 设为社区反代 `bgmapi.anibt.net`（官方地址部分网络需特殊环境，反代通常可直连），引导内说明反代与隐私、加「个人 Token 经反代中转」同意勾选（同步 `bangumiNonOfficialTokenConsent`，**仅首启写入**不影响老用户）。（`feature/onboarding/*`、`data/datastore/SettingsState`）
+- **N11 UI 去内部编号**：移除设置页向用户展示的内部编号（如「RC.14.01」），仅保留代码注释。
+- **N12 详情页主线跳转关联条目多源评分**：「智能选择主线」跳转的 Bangumi 关联条目详情页只显示 Bangumi 评分。根因 = 关联条目仅有 Bangumi 源，`crossValidateRatings` 按**绝对相似度阈值**逐源匹配、续作/跨语言标题易漏配。新增 `enrichViaCrossSourceSearch`：复用搜索页「多源搜索 + 季度感知聚类（`sameWork`/`clusterMatches`）」把同簇其他源评分挂到本 workId。（`data/repository/WorkRepositoryImpl`）
+- **N3（延后）AI 标签分维分类**：**可行**——项目已具备完整 AI 调用管线（见下）。设计：新增一类 `AiTask.TagClassify`（或独立用例）复用现有引擎（含 DeepSeek 兼容的 response_format 降级与 JSON 修复），在口味画像更新后于**后台**批量分类未知标签、持久化 tag→维度覆盖表并优先于规则分类器；未配置 AI 时回退规则。本批次暂未落地，留作下一步。
+- **文档制度纠正**：0.14.0 记「A4 LLM 标签分类延后（无 AI 基础设施）」有误——项目实有完整 AI 管线：`AiEngine`/`AiEngineImpl`、`AiTask` 五类（SpoilerRadar/TasteProfile/TonightRecommender/RouteMap/TasteMatch）、`OpenAiCompatibleProvider`、`AiTaskSpecs`（prompt+schema）、`SpoilerGuard`、`CredentialStore`。N3 仅为待接入新任务类型。
 
 ## 可追溯性总表（RC.00–RC.18）
 

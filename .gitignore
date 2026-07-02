@@ -48,3 +48,7 @@ secrets.properties
 hs_err_pid*.log
 replay_pid*.log
 hs_err_pid*.mdmp
+
+# 算法 / 开发文档（内部规划与算法笔记，不随成品发布；仅保留 README）
+算法文档/
+!算法文档/README.md

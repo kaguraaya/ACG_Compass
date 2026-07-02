@@ -60,6 +60,18 @@ interface BacklogRepository {
     suspend fun bulk(op: BulkOp, ids: List<String>): AppResult<Unit>
 
     /**
+     * C 轮：把作品移入吃灰馆，并记住归档前的 Bangumi 收藏状态 [prevStatus]（以便移出时还原）。
+     * 仅置 `inDustMuseum=true` 与 `prevStatus`，不触碰其它字段；作品不在池中则无操作。
+     */
+    suspend fun archiveToDust(workId: String, prevStatus: String?)
+
+    /**
+     * C 轮：把作品移出吃灰馆，清除并返回归档前记住的状态（[archiveToDust] 写入的 prevStatus）。
+     * 置 `inDustMuseum=false`、`prevStatus=null`；作品不在池中或无记录返回 `null`。
+     */
+    suspend fun restoreFromDust(workId: String): String?
+
+    /**
      * 一键抽番，返回满足硬过滤约束的条目及可解释理由（RC.08.06 / RC.11 / Property 14）。
      * 无满足约束的候选时 [DrawResult.pick] 为 `null`。
      *

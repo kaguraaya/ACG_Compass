@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -7,6 +9,14 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
+// RC.02 4.6 / RC.00：从 gitignored 的 local.properties 读取内置 Bangumi OAuth 应用凭据（App 自身凭据，
+// 非用户凭据）注入 BuildConfig：不进源码、不进 git。留空时 App 回退到「用户在设置页自填 App ID/Secret」模式。
+val acgLocalProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+fun acgLocalProp(key: String): String = (acgLocalProperties.getProperty(key) ?: "").trim()
+
 android {
     namespace = "com.acgcompass"
     compileSdk = 34
@@ -15,13 +25,18 @@ android {
         applicationId = "com.acgcompass"
         minSdk = 26
         targetSdk = 34
-        versionCode = 11
-        versionName = "0.11.0-R"
+        versionCode = 15
+        versionName = "0.15.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        // RC.02 4.6：内置 Bangumi OAuth 应用凭据（来自上方 local.properties）。最终用户无需注册即可一键登录；
+        // 留空则回退到设置页自填。值反引号使生成 `String BANGUMI_CLIENT_ID = "..."`。
+        buildConfigField("String", "BANGUMI_CLIENT_ID", "\"${acgLocalProp("bangumi.clientId")}\"")
+        buildConfigField("String", "BANGUMI_CLIENT_SECRET", "\"${acgLocalProp("bangumi.clientSecret")}\"")
     }
 
     // Room schema export (RC.16.03 / design: exportSchema=true for migration tests).

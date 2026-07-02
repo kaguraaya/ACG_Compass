@@ -95,6 +95,8 @@ class BangumiSyncManager @Inject constructor(
         if (username.isBlank()) {
             return AppResult.Failure(AppError.Unauthorized(cause = "无法获取 Bangumi 用户名"))
         }
+        // D1：同步时持久化用户名，供设置页「当前用户名」展示（不再恒显「暂无数据」）。
+        runCatching { settingsDataStore.setBangumiUsername(username) }
 
         val now = System.currentTimeMillis()
         var added = 0
@@ -165,13 +167,14 @@ class BangumiSyncManager @Inject constructor(
     private fun mapCollection(dto: BangumiUserSubjectCollectionDto, now: Long): UserCollectionEntity? {
         val subjectId = dto.subjectId.takeIf { it > 0 } ?: return null
         val workId = subjectId.toString()
-        // P0-2：口味画像只用「作品自身的 Bangumi 社区标签」（按标注人数降序），不再混入用户自定义
-        // 标签（dto.tags）；并过滤年份/季度/媒介格式/改编来源等非内容噪声（如「2024年10月」「TV」「漫画改」），
-        // 使高/低分倾向标签是真正的题材/情绪信号，而非每部都有的元数据（用户诉求：用作品本身 tag）。
+        // P0-2 / C 轮：口味画像只用「作品自身的 Bangumi 社区标签」（按标注人数降序），不混入用户自定义
+        // 标签（dto.tags）。**只保留题材**（[TasteTagTaxonomy.isSelectableGenre] 白名单）——剔除人物名
+        // （牧濑红莉栖）、声优、梗（爱的战士虚渊玄）、厂商、年份等噪声。否则这些高标注噪声会挤占 top-N，
+        // 把题材标签挤出去，导致高分桶题材稀疏、喜欢的番匹配不上（用户：匹配度太怂、都差不多）。
         val contentTags = dto.subject?.tags.orEmpty()
             .sortedByDescending { it.count }
             .map { cleanTag(it.name) }
-            .filter { it.length >= 2 && !TasteTagTaxonomy.isMeta(it) }
+            .filter { TasteTagTaxonomy.isSelectableGenre(it) }
             .distinct()
             .take(12)
         return UserCollectionEntity(

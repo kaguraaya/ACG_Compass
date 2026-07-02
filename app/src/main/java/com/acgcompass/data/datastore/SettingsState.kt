@@ -73,16 +73,22 @@ data class SettingsState(
         const val DEFAULT_RECORD_TIME_MACHINE_SNAPSHOTS = true
         const val DEFAULT_BANGUMI_ENABLED = true
         const val DEFAULT_ANILIST_ENABLED = false
-        const val DEFAULT_JIKAN_ENABLED = false
+        const val DEFAULT_JIKAN_ENABLED = true
         const val DEFAULT_MAL_ENABLED = false
-        const val DEFAULT_VNDB_ENABLED = false
+        const val DEFAULT_VNDB_ENABLED = true
         const val DEFAULT_SHOW_ADULT_CONTENT = false
         const val DEFAULT_ONBOARDING_SHOWN = false
         val DEFAULT_THEME_MODE = ThemeMode.SYSTEM
         const val DEFAULT_DYNAMIC_COLOR = true
 
-        /** Bangumi 官方 API（默认）。 */
+        /** Bangumi 官方 API（用于 isOfficial 判定与「切回官方」；结尾带斜杠）。 */
         const val DEFAULT_BANGUMI_API_BASE_URL = "https://api.bgm.tv/"
+
+        /**
+         * N6：推荐的社区反代地址（新手引导默认设为此地址）。官方 api.bgm.tv 在部分网络需特殊环境，
+         * 反代可直连；但个人 Token 会经非官方主机中转，需用户在引导里显式同意（[bangumiNonOfficialTokenConsent]）。
+         */
+        const val COMMUNITY_PROXY_BANGUMI_API_BASE_URL = "https://bgmapi.anibt.net/"
 
         /** H7：默认关闭自动同步（0 分钟）。 */
         const val DEFAULT_AUTO_SYNC_INTERVAL_MINUTES = 0
@@ -90,7 +96,10 @@ data class SettingsState(
         /** Phase④：默认推荐社区均分下限 6.0（沿用此前推荐器的默认下限）。 */
         const val DEFAULT_RECOMMEND_MIN_COMMUNITY_SCORE = 6.0f
 
-        /** Phase④：默认口味匹配度阈值 0（关闭，行为与旧版一致；用户可上调以过滤低匹配作品）。 */
-        const val DEFAULT_TASTE_MATCH_THRESHOLD = 0.0f
+        /**
+         * Phase④ / N5：默认口味匹配度阈值 0.4（质量默认，避免推荐 30% 低匹配作品）。用户在设置里选「关闭」
+         * 即置 0 → 推荐器**真正**不施加口味下限（N5 修复：此前「关闭」被强制回落 0.45 形同虚设）。
+         */
+        const val DEFAULT_TASTE_MATCH_THRESHOLD = 0.4f
     }
 }

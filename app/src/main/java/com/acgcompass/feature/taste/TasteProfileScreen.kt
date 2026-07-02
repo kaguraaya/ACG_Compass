@@ -58,6 +58,8 @@ fun TasteProfileRoute(
         importing = importing,
         // R47：CTA 已配置 Bangumi 则真正导入并刷新画像；未配置则跳转设置登录。
         onImportData = { viewModel.onImportFromBangumi(onNotConfigured = onOpenSettings) },
+        // A4：手动重新分析（重算统计画像 + 联网补全 12 维特征，无需重新同步）。
+        onRefreshAnalysis = { viewModel.onRefreshAnalysis() },
         modifier = modifier,
     )
 }
@@ -71,6 +73,7 @@ fun TasteProfileScreen(
     modifier: Modifier = Modifier,
     importing: Boolean = false,
     onImportData: () -> Unit = {},
+    onRefreshAnalysis: () -> Unit = {},
 ) {
     AcgScreenScaffold(
         title = "口味画像",
@@ -102,6 +105,14 @@ fun TasteProfileScreen(
                     ),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
+                // A4：手动重新分析入口——评分 / 标签变动后一键重算画像 + 联网补全 12 维特征。
+                androidx.compose.material3.OutlinedButton(
+                    onClick = onRefreshAnalysis,
+                    enabled = !importing,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (importing) "正在重新分析…" else "重新分析口味画像（联网补全 12 维特征）")
+                }
                 val lowSample = profile.confidence < 0.3f
                 if (lowSample) {
                     Text(

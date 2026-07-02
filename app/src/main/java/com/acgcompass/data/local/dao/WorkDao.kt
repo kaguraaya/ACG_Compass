@@ -30,6 +30,10 @@ interface WorkDao {
     @Query("SELECT * FROM works")
     suspend fun getAll(): List<WorkEntity>
 
+    /** #8：本地作品总数——启动时据此判断候选池是否需补齐到目标规模（不足 1000 自动补齐）。 */
+    @Query("SELECT COUNT(*) FROM works")
+    suspend fun count(): Int
+
     @Query("SELECT * FROM works WHERE id = :id")
     fun observeById(id: String): Flow<WorkEntity?>
 

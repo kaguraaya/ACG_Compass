@@ -134,6 +134,9 @@ abstract class AiModule {
             credentialSource = credentialSource,
             httpCaller = httpCaller,
             json = json,
+            // R-new4：deepseek-v4-flash/pro 默认开启思考，思维链空耗 completion 预算并截断结构化输出；
+            // 本 app 的 AI 任务（雷达/匹配/画像/推荐）均为结构化提取，无需思考，故默认关闭（实测 reasoning_tokens→0、JSON 完整）。
+            disableThinking = true,
         )
 
         @Provides
