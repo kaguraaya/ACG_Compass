@@ -217,6 +217,8 @@ private class FakeWorkDao : WorkDao {
 
     override suspend fun getAll(): List<WorkEntity> = works.values.toList()
 
+    override suspend fun count(): Int = works.size
+
     override suspend fun getById(id: String): WorkEntity? = works[id]
 
     override suspend fun upsert(work: WorkEntity) {
@@ -236,6 +238,8 @@ private class FakeWorkDao : WorkDao {
     override fun observeById(id: String): Flow<WorkEntity?> = worksFlow.map { works[id] }
     override fun observeByMediaType(mediaType: String): Flow<List<WorkEntity>> =
         worksFlow.map { list -> list.filter { it.mediaType == mediaType } }
+    override suspend fun getIdsByMediaType(mediaType: String, limit: Int): List<String> =
+        works.values.filter { it.mediaType == mediaType }.take(limit).map { it.id }
     override fun search(query: String): Flow<List<WorkEntity>> = worksFlow
     override suspend fun insert(work: WorkEntity) = upsert(work)
     override suspend fun upsertAll(works: List<WorkEntity>) {

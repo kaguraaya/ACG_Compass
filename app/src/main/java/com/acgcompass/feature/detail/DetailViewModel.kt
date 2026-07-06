@@ -133,6 +133,7 @@ class DetailViewModel @Inject constructor(
                         rating = it.rating,
                         shortReview = it.comment,
                         progress = it.progress,
+                        isPrivate = it.isPrivate,
                     )
                 }
             }
@@ -319,6 +320,8 @@ class DetailViewModel @Inject constructor(
                 updatedAt = now,
                 syncedAt = existing?.syncedAt ?: now,
                 sourceUpdatedAt = existing?.sourceUpdatedAt,
+                // M：自动置「想看」不改可见性，保留既有 private（避免误将私密记录改回公开）。
+                isPrivate = existing?.isPrivate ?: false,
             ),
         )
         val subjectId = resolveBangumiSubjectId(work) ?: return
@@ -742,6 +745,7 @@ class DetailViewModel @Inject constructor(
         progress: Int?,
         comment: String?,
         tags: List<String>? = null,
+        private: Boolean = false,
     ) {
         // H4：进度不得超过总集数；并据进度自动推导状态（用户未显式选状态时）。
         val totalEps = currentWork?.units?.episodes?.takeIf { it > 0 }
@@ -807,6 +811,8 @@ class DetailViewModel @Inject constructor(
                     updatedAt = now,
                     syncedAt = existing?.syncedAt ?: now,
                     sourceUpdatedAt = existing?.sourceUpdatedAt,
+                    // M：本地持久化可见性（仅自己可见），下次打开编辑对话框可回显当前状态。
+                    isPrivate = private,
                 ),
             )
             // B-1：保存评分 / 评价 / 状态后用最新本地收藏重算口味画像。
@@ -834,6 +840,8 @@ class DetailViewModel @Inject constructor(
                 rate = rating ?: 0,
                 comment = comment ?: "",
                 tags = tags ?: emptyList(),
+                // M：回写可见性（仅自己可见 / 公开）。
+                private = private,
             )
             // M5：动画进度通过专用章节端点上传（书籍 / 漫画不上传进度，仅本地）。
             val isAnime = currentWork?.mediaType == com.acgcompass.domain.model.MediaType.ANIME

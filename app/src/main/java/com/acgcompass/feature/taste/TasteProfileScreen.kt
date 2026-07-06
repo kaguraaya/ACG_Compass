@@ -16,6 +16,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -30,6 +31,8 @@ import com.acgcompass.core.ui.AcgScreenScaffold
 import com.acgcompass.core.ui.ScreenContentPadding
 import com.acgcompass.core.ui.StateScaffold
 import com.acgcompass.core.ui.UiState
+import com.acgcompass.data.taste.TagClassifyProgress
+import com.acgcompass.data.taste.TasteRefreshProgress
 import com.acgcompass.domain.model.TagBucket
 import com.acgcompass.domain.model.TasteProfile
 import kotlin.math.roundToInt
@@ -45,6 +48,9 @@ fun TasteProfileRoute(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     val importing by viewModel.importing.collectAsStateWithLifecycle()
+    val refreshProgress by viewModel.refreshProgress.collectAsStateWithLifecycle()
+    val classifying by viewModel.classifying.collectAsStateWithLifecycle()
+    val tagClassifyProgress by viewModel.tagClassifyProgress.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
     androidx.compose.runtime.LaunchedEffect(message) {
         message?.let {
@@ -52,14 +58,21 @@ fun TasteProfileRoute(
             viewModel.clearMessage()
         }
     }
+    // B：进入画像页自动联网分析（内部按 6h 节流判断是否需要）。
+    androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.onScreenOpened() }
     TasteProfileScreen(
         state = state,
         onBack = onBack,
         importing = importing,
+        refreshProgress = refreshProgress,
         // R47：CTA 已配置 Bangumi 则真正导入并刷新画像；未配置则跳转设置登录。
         onImportData = { viewModel.onImportFromBangumi(onNotConfigured = onOpenSettings) },
         // A4：手动重新分析（重算统计画像 + 联网补全 12 维特征，无需重新同步）。
         onRefreshAnalysis = { viewModel.onRefreshAnalysis() },
+        classifying = classifying,
+        tagClassifyProgress = tagClassifyProgress,
+        // N3：手动 AI 标签分维分类（细化本地兜底为题材的未知标签）。
+        onClassifyTags = { viewModel.onClassifyTags() },
         modifier = modifier,
     )
 }
@@ -72,8 +85,12 @@ fun TasteProfileScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     importing: Boolean = false,
+    refreshProgress: TasteRefreshProgress? = null,
+    classifying: Boolean = false,
+    tagClassifyProgress: TagClassifyProgress? = null,
     onImportData: () -> Unit = {},
     onRefreshAnalysis: () -> Unit = {},
+    onClassifyTags: () -> Unit = {},
 ) {
     AcgScreenScaffold(
         title = "口味画像",
@@ -113,6 +130,23 @@ fun TasteProfileScreen(
                 ) {
                     Text(if (importing) "正在重新分析…" else "重新分析口味画像（联网补全 12 维特征）")
                 }
+                // B：上次分析时间。
+                Text(
+                    "上次分析：${formatLastUpdated(profile.generatedAt)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                // B：联网分析进度条（自动 / 手动分析进行中时显示）。
+                refreshProgress?.let { RefreshProgressCard(it) }
+                // N3：AI 标签分维分类入口——把本地兜底为题材的未知社区标签交 AI 归入更精确维度并缓存，提升画像 / 评分。
+                androidx.compose.material3.OutlinedButton(
+                    onClick = onClassifyTags,
+                    enabled = !classifying && !importing,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (classifying) "正在分维分类…" else "AI 标签分维分类（细化未知标签维度）")
+                }
+                tagClassifyProgress?.let { TagClassifyProgressCard(it) }
                 val lowSample = profile.confidence < 0.3f
                 if (lowSample) {
                     Text(
@@ -176,6 +210,59 @@ private fun StatLine(label: String, value: String) {
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+/** B：联网分析进度卡——补齐特征阶段显示确定进度条 + “x/N”；构建阶段无总量走不确定条。 */
+@Composable
+private fun RefreshProgressCard(progress: TasteRefreshProgress) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            val label = when (progress.phase) {
+                TasteRefreshProgress.Phase.FETCHING_RATED -> "正在补齐已评分作品特征"
+                TasteRefreshProgress.Phase.FETCHING_POOL -> "正在补齐候选池特征（提升未评分作品打分准确度）"
+                TasteRefreshProgress.Phase.BUILDING -> "正在构建口味画像"
+            }
+            val suffix = if (progress.isDeterminate) "（${progress.current}/${progress.total}）" else ""
+            Text("$label$suffix", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+            if (progress.isDeterminate) {
+                LinearProgressIndicator(progress = { progress.fraction }, modifier = Modifier.fillMaxWidth())
+            } else {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+        }
+    }
+}
+
+/** N3：AI 标签分维分类进度卡——确定进度条 + “done/total”。 */
+@Composable
+private fun TagClassifyProgressCard(progress: TagClassifyProgress) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            val total = progress.total.coerceAtLeast(1)
+            Text(
+                "正在用 AI 分维分类标签（${progress.done}/${progress.total}）",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            LinearProgressIndicator(
+                progress = { progress.done.toFloat() / total },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
+/** B：将画像生成时间（epoch 毫秒）格式化为本地时间字符串；≤0 视为尚未分析。 */
+private fun formatLastUpdated(millis: Long): String {
+    if (millis <= 0L) return "尚未分析"
+    val zoned = java.time.Instant.ofEpochMilli(millis).atZone(java.time.ZoneId.systemDefault())
+    return java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").format(zoned)
 }
 
 @OptIn(ExperimentalLayoutApi::class)

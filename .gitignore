@@ -52,3 +52,8 @@ hs_err_pid*.mdmp
 # 算法 / 开发文档（内部规划与算法笔记，不随成品发布；仅保留 README）
 算法文档/
 !算法文档/README.md
+
+# 内部开发文档（GitHub 仅保留 README.md；其余规划 / 经验 / 需求文档不进仓库，本地保留）
+/DEVELOPMENT.md
+/EXPERIENCE.md
+/REQUIREMENTS.md

@@ -141,6 +141,7 @@ private fun MediaType.discoverLabel(): String = when (this) {
     MediaType.NOVEL -> "小说"
     MediaType.GAME -> "游戏"
     MediaType.VN -> "视觉小说"
+    MediaType.OTHER -> "其他"
 }
 
 /** 补完成本展示文案（RC.07.07）。 */

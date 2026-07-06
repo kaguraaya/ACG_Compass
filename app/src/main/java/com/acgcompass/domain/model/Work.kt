@@ -9,6 +9,9 @@ enum class MediaType {
     NOVEL,
     GAME,
     VN,
+
+    /** L：音乐 / 三次元（真人）/ 未知等**非 ACG 核心**类型的归类，避免被误判为动画污染发现池 / 推荐 / 口味池。 */
+    OTHER,
     ;
 
     companion object {

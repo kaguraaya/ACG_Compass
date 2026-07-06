@@ -21,6 +21,10 @@ interface WorkFeatureDao {
     @Query("SELECT subjectId FROM work_features")
     suspend fun getAllIds(): List<String>
 
+    /** 取缓存特征全体（上限 [limit]），供口味画像候选池校准（RC.16）。 */
+    @Query("SELECT * FROM work_features LIMIT :limit")
+    suspend fun getAll(limit: Int): List<WorkFeatureEntity>
+
     @Upsert
     suspend fun upsert(entity: WorkFeatureEntity)
 

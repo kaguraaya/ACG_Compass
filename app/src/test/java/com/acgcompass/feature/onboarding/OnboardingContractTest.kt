@@ -22,14 +22,15 @@ class OnboardingContractTest : StringSpec({
         shouldShowOnboarding(onboardingShown = true) shouldBe false
     }
 
-    "默认引导包含三条核心说明：不提供播放下载、本地保存、可稍后配置 key" {
+    "默认引导包含五条核心说明：不提供播放下载、本地保存、反代默认、多源开箱、AI 可选" {
         val state = OnboardingUiState.DEFAULT
-        state.highlights shouldHaveSize 3
+        state.highlights shouldHaveSize 5
 
         val allText = (state.highlights.joinToString { it.title + it.description })
         allText shouldContain "播放"
         allText shouldContain "下载"
         allText shouldContain "本机"
+        allText shouldContain "反代"
         allText shouldContain "API Key"
     }
 

@@ -16,8 +16,13 @@ import kotlinx.coroutines.flow.first
  */
 class DatabasePreMigrationBackupTest : StringSpec({
 
-    "AcgMigrations.ALL is empty at schema version 1 and never uses destructive fallback" {
-        AcgMigrations.ALL.size shouldBe 0
+    "AcgMigrations.ALL 连续覆盖 1 → CURRENT_DB_VERSION、无破坏性回退（版本号与迁移数须同步）" {
+        // local-first：绝不用 fallbackToDestructiveMigration；每个相邻版本一个手写迁移，且必须覆盖到
+        // @Database(version) 对应的 CURRENT_DB_VERSION。此断言守护二者同步，防止再次脱节
+        // （历史上 CURRENT_DB_VERSION 停在 1，导致升级备份安全网静默失效）。
+        AcgMigrations.ALL.size shouldBe DatabasePreMigrationBackup.CURRENT_DB_VERSION - 1
+        AcgMigrations.ALL.first().startVersion shouldBe 1
+        AcgMigrations.ALL.last().endVersion shouldBe DatabasePreMigrationBackup.CURRENT_DB_VERSION
     }
 
     "fresh install reports FreshInstall and creates no backup" {

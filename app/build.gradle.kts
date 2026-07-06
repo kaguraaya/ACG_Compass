@@ -25,8 +25,8 @@ android {
         applicationId = "com.acgcompass"
         minSdk = 26
         targetSdk = 34
-        versionCode = 15
-        versionName = "0.15.0"
+        versionCode = 18
+        versionName = "0.16.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -99,6 +99,8 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.activity.compose)
+    // P：动态开屏（androidx core-splashscreen，兼容 API 23+，承接 O 的 DayNight 启动底色）。
+    implementation(libs.androidx.core.splashscreen)
 
     // Compose (BOM aligns all Compose artifact versions)
     implementation(platform(libs.androidx.compose.bom))

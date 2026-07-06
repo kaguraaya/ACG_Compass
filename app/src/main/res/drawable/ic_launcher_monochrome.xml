@@ -4,13 +4,11 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Hoshimi 前景：指南针圆环（沿用品牌浅蓝 #7FB3FF）+ 四芒星指针（由原菱形指针演化，呼应「星见 Hoshimi」）。 -->
-    <!-- 指南针圆环（保持不变） -->
+    <!-- Android 13+ 主题图标（原生亮/暗自适应）：单色轮廓，系统按主题自动着色。形状与前景一致：圆环 + 四芒星指针。 -->
     <path
-        android:fillColor="#7FB3FF"
+        android:fillColor="#1F2A44"
         android:pathData="M54,54 m-26,0 a26,26 0 1,0 52,0 a26,26 0 1,0 -52,0 M54,54 m-22,0 a22,22 0 1,1 44,0 a22,22 0 1,1 -44,0 Z" />
-    <!-- 四芒星指针（南北长、东西短，保留指针指向感） -->
     <path
-        android:fillColor="#FFFFFF"
+        android:fillColor="#1F2A44"
         android:pathData="M54,26 L59,49 L66,54 L59,59 L54,82 L49,59 L42,54 L49,49 Z" />
 </vector>

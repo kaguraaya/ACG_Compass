@@ -18,11 +18,23 @@ interface WorkFeatureRepository {
     /**
      * 批量取特征：先一次性读缓存命中；对未命中者在 [networkBudget] 限额内 best-effort 联网补齐。
      * 返回 subjectId → [WorkFeature]（仅含成功获取者）。
+     *
+     * [onProgress]（可选，B 进度条）：每处理完一个 id 回调 `(done, total)`，供画像页展示联网分析进度。
      */
-    suspend fun getFeatures(subjectIds: List<String>, networkBudget: Int = 0): Map<String, WorkFeature>
+    suspend fun getFeatures(
+        subjectIds: List<String>,
+        networkBudget: Int = 0,
+        onProgress: ((done: Int, total: Int) -> Unit)? = null,
+    ): Map<String, WorkFeature>
 
     /** 仅读本地缓存，绝不联网（批量发现页 / 离线场景用）。 */
     suspend fun getCached(subjectId: String): WorkFeature?
+
+    /**
+     * 取「未评分候选池」：本地缓存的作品特征全体（上限 [limit]），绝不联网。池代表用户会去搜索 / 浏览的
+     * 外部作品分布，其 rawZ 中位定口味校准中心 μ（RC.16 候选池校准）。调用方需自行排除已评分作品。
+     */
+    suspend fun getCachedPool(limit: Int = 3000): List<WorkFeature>
 
     /** 主动缓存某条目特征（同步链路调用，best-effort）。返回是否成功落库。 */
     suspend fun refresh(subjectId: String): Boolean

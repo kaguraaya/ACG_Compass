@@ -47,11 +47,13 @@ class ComputeTasteMatchUseCase @Inject constructor() {
 
     /**
      * @param userRating 若用户已给该作品评分则传入（触发已评分偏置）；否则回退到画像内记录的评分。
+     * @param tagOverrides N3 AI 分维分类缓存（清洗后标签 → 维度），仅作用于本地兜底为题材的未知标签；缺省空表回退本地。
      */
     operator fun invoke(
         feature: WorkFeature,
         profile: AdvancedTasteProfile,
         userRating: Int? = null,
+        tagOverrides: Map<String, TasteCategory> = emptyMap(),
     ): TasteMatchResult {
         val rating = userRating ?: profile.ratedSubjectScores[feature.subjectId]
         val isRated = rating != null
@@ -69,7 +71,7 @@ class ComputeTasteMatchUseCase @Inject constructor() {
             )
         }
 
-        val f = TasteRawScorer.featurize(feature)
+        val f = TasteRawScorer.featurize(feature, tagOverrides)
         val rawZ = TasteRawScorer.rawScore(f, feature, profile)
         val pProfile = TasteScoringParams.logistic(rawZ, profile.calibration.mu, profile.calibration.tau)
         // N2 修复：已评分作品以「显式评分锚」为主、长期画像做修正。此前只加过弱的 `0.12·pref` 偏置，

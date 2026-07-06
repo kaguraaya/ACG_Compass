@@ -16,6 +16,8 @@ fun mediaTypePriority(type: MediaType): Int = when (type) {
     MediaType.VN -> 1
     MediaType.MANGA -> 2
     MediaType.NOVEL -> 2
+    // L：非 ACG 核心类型（音乐 / 三次元 / 未知）优先级最低，同置信度时排最后。
+    MediaType.OTHER -> 3
 }
 
 /**

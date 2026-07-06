@@ -599,7 +599,8 @@ private fun FilterSortBar(
         // 媒介类型过滤。
         Text("类型", style = MaterialTheme.typography.labelMedium)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            MediaType.entries.forEach { mediaType ->
+            // L：隐藏 OTHER（音乐 / 三次元 / 未知），不作为可筛选媒介类型。
+            MediaType.entries.filter { it != MediaType.OTHER }.forEach { mediaType ->
                 FilterChip(
                     selected = mediaType in filter.mediaTypes,
                     onClick = { onToggleMediaTypeFilter(mediaType) },

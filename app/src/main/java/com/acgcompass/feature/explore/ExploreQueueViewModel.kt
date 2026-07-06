@@ -110,7 +110,7 @@ class ExploreQueueViewModel @Inject constructor(
         return ExploreQueueUiState.Ready(cards = cards, index = 0)
     }
 
-    /** 左滑：加入待补池（去重）并前进。 */
+    /** 右滑：加入待补池（去重）并前进。 */
     fun onLike() {
         val st = _state.value as? ExploreQueueUiState.Ready ?: return
         val card = st.cards.getOrNull(st.index) ?: return
@@ -121,7 +121,7 @@ class ExploreQueueViewModel @Inject constructor(
         advance(st)
     }
 
-    /** 右滑：记曝光略过（冷却内不再推荐）并前进。 */
+    /** 左滑：记曝光略过（冷却内不再推荐）并前进。 */
     fun onSkip() {
         val st = _state.value as? ExploreQueueUiState.Ready ?: return
         val card = st.cards.getOrNull(st.index) ?: return

@@ -11,13 +11,15 @@ import io.kotest.matchers.shouldBe
 // 覆盖：媒介类型映射、标题选取、体量/年份解析、封面优选、评分「不伪造」语义（RC.07 9.2 / RC.01 3.7）。
 class BangumiMappersTest : StringSpec({
 
-    "mapBangumiMediaType maps known types and falls back to ANIME" {
+    // L 回归：音乐(3) / 三次元(6) / 未知不再误判为动画，统一归 OTHER（避免泄漏进发现池 / 推荐 / 口味池）。
+    "mapBangumiMediaType maps known types; 音乐/三次元/未知归 OTHER（L）" {
         mapBangumiMediaType(BangumiSubjectType.ANIME) shouldBe MediaType.ANIME
         mapBangumiMediaType(BangumiSubjectType.BOOK) shouldBe MediaType.MANGA
         mapBangumiMediaType(BangumiSubjectType.GAME) shouldBe MediaType.GAME
-        mapBangumiMediaType(BangumiSubjectType.MUSIC) shouldBe MediaType.ANIME
-        mapBangumiMediaType(null) shouldBe MediaType.ANIME
-        mapBangumiMediaType(999) shouldBe MediaType.ANIME
+        mapBangumiMediaType(BangumiSubjectType.MUSIC) shouldBe MediaType.OTHER
+        mapBangumiMediaType(BangumiSubjectType.REAL) shouldBe MediaType.OTHER
+        mapBangumiMediaType(null) shouldBe MediaType.OTHER
+        mapBangumiMediaType(999) shouldBe MediaType.OTHER
     }
 
     "parseBangumiYear extracts year prefix and rejects garbage" {

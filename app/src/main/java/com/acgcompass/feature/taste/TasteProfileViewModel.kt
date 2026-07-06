@@ -7,7 +7,11 @@ import com.acgcompass.core.ui.Cta
 import com.acgcompass.core.ui.UiState
 import com.acgcompass.data.local.dao.UserCollectionDao
 import com.acgcompass.data.sync.BangumiSyncManager
+import com.acgcompass.data.taste.AiTagClassifier
+import com.acgcompass.data.taste.TagClassifyOutcome
+import com.acgcompass.data.taste.TagClassifyProgress
 import com.acgcompass.data.taste.TasteEngine
+import com.acgcompass.data.taste.TasteRefreshProgress
 import com.acgcompass.domain.model.TasteProfile
 import com.acgcompass.domain.repository.TasteProfileRepository
 import com.acgcompass.domain.usecase.TasteInputRecord
@@ -35,6 +39,7 @@ class TasteProfileViewModel @Inject constructor(
     private val bangumiSyncManager: BangumiSyncManager,
     private val userCollectionDao: UserCollectionDao,
     private val tasteEngine: TasteEngine,
+    private val aiTagClassifier: AiTagClassifier,
 ) : ViewModel() {
 
     private val _message = MutableStateFlow<String?>(null)
@@ -42,6 +47,15 @@ class TasteProfileViewModel @Inject constructor(
 
     private val _importing = MutableStateFlow(false)
     val importing: StateFlow<Boolean> = _importing.asStateFlow()
+
+    /** B：联网分析进度（进度条），直接透传引擎进度流；null = 无分析进行中。 */
+    val refreshProgress: StateFlow<TasteRefreshProgress?> = tasteEngine.observeRefreshProgress()
+
+    /** N3：AI 标签分维分类进度（进度条），透传分类器进度流；null = 无分类进行中。 */
+    val tagClassifyProgress: StateFlow<TagClassifyProgress?> = aiTagClassifier.observeProgress()
+
+    private val _classifying = MutableStateFlow(false)
+    val classifying: StateFlow<Boolean> = _classifying.asStateFlow()
 
     val uiState: StateFlow<UiState<TasteProfile>> =
         repository.observeTasteProfile()
@@ -112,9 +126,26 @@ class TasteProfileViewModel @Inject constructor(
 
     /**
      * A4：手动「重新分析」入口——用当前本地收藏重算统计画像 + 联网补全 12 维引擎特征（无需重新同步 Bangumi）。
-     * 供画像页按钮触发：评分 / 标签变动后一键刷新口味画像，以及详情页 / 今晚看什么 / 探索队列共用的匹配画像。
+     * 供画像页按钮触发；后台执行，进度经 [refreshProgress] 展示。不受节流限制。
      */
-    fun onRefreshAnalysis() {
+    fun onRefreshAnalysis() = runRefresh(isAuto = false)
+
+    /**
+     * B：进入画像页时的**自动联网分析**——距上次 12 维引擎画像构建超过 [AUTO_REFRESH_INTERVAL_MS] 且确有已评分
+     * 收藏时，后台静默重算（联网补齐 work_features）。节流避免每次进入都联网；失败静默不打扰用户。
+     */
+    fun onScreenOpened() {
+        if (_importing.value) return
+        val lastBuiltAt = tasteEngine.currentProfile?.generatedAt ?: 0L
+        if (System.currentTimeMillis() - lastBuiltAt <= AUTO_REFRESH_INTERVAL_MS) return
+        viewModelScope.launch {
+            val hasRated = userCollectionDao.getAll().any { it.rating != null && it.sourceItemId.isNotBlank() }
+            if (hasRated) runRefresh(isAuto = true)
+        }
+    }
+
+    /** 重算统计画像 + 联网补齐 12 维特征。[isAuto] 自动触发时不弹 toast（仅靠进度条提示）。 */
+    private fun runRefresh(isAuto: Boolean) {
         if (_importing.value) return
         _importing.value = true
         viewModelScope.launch {
@@ -122,16 +153,47 @@ class TasteProfileViewModel @Inject constructor(
                 when (repository.recomputeFromLocal()) {
                     is AppResult.Success -> {
                         runCatching { tasteEngine.refreshFull() }
-                        _message.value = "已重新分析口味画像"
+                        if (!isAuto) _message.value = "已重新分析口味画像"
                     }
-                    is AppResult.Failure -> _message.value = "重新分析失败，请稍后再试"
+                    is AppResult.Failure -> if (!isAuto) _message.value = "重新分析失败，请稍后再试"
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Throwable) {
-                _message.value = "重新分析失败，请稍后再试"
+                if (!isAuto) _message.value = "重新分析失败，请稍后再试"
             } finally {
                 _importing.value = false
+            }
+        }
+    }
+
+    /**
+     * N3：手动触发「AI 标签分维分类」——把本地兜底为题材的未知社区标签分批交 AI 归入更精确维度并缓存，
+     * 供画像 / 评分复用。后台执行，进度经 [tagClassifyProgress] 展示；成功后仅用缓存快速重建画像使新维度生效。
+     * AI 未配置 / 失败时提示并回退本地规则（不阻塞、不伪造，RC.14.01/03）。
+     */
+    fun onClassifyTags() {
+        if (_classifying.value) return
+        _classifying.value = true
+        viewModelScope.launch {
+            try {
+                _message.value = when (val outcome = aiTagClassifier.classifyPending()) {
+                    is TagClassifyOutcome.Done ->
+                        if (outcome.classified > 0) {
+                            runCatching { tasteEngine.rebuildFromCache() }
+                            "已用 AI 分维分类 ${outcome.classified} 个标签"
+                        } else {
+                            "本轮未新增分类（AI 未返回可用结果）"
+                        }
+                    TagClassifyOutcome.NothingToDo -> "没有待分类的新标签"
+                    TagClassifyOutcome.NotConfigured -> "未配置 AI，已回退本地规则（可在设置中配置 AI）"
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                _message.value = "标签分维分类失败，请稍后再试"
+            } finally {
+                _classifying.value = false
             }
         }
     }
@@ -142,5 +204,8 @@ class TasteProfileViewModel @Inject constructor(
 
     private companion object {
         val EMPTY_CTA = Cta(label = "从 Bangumi 导入口味数据（或先在设置登录）", action = "import")
+
+        /** B：自动联网分析节流间隔——距上次引擎画像构建超过此值才在进入画像页时后台重算（6 小时）。 */
+        const val AUTO_REFRESH_INTERVAL_MS: Long = 6L * 60 * 60 * 1000
     }
 }

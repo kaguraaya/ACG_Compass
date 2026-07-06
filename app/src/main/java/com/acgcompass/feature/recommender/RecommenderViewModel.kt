@@ -474,6 +474,7 @@ class RecommenderViewModel @Inject constructor(
             MediaType.NOVEL -> "小说"
             MediaType.GAME -> "游戏"
             MediaType.VN -> "视觉小说"
+            MediaType.OTHER -> "其他"
         },
         ratingText = null,
         sourceTags = listOf(primarySource.name),

@@ -2,8 +2,12 @@ package com.acgcompass.feature.onboarding
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.acgcompass.data.credential.CredentialStore
+import com.acgcompass.data.credential.SecretBundle
+import com.acgcompass.data.credential.SourceId
 import com.acgcompass.data.datastore.SettingsDataStore
 import com.acgcompass.data.datastore.SettingsState
+import com.acgcompass.data.remote.ai.ProviderId
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -26,6 +30,7 @@ import javax.inject.Inject
 @HiltViewModel
 class OnboardingViewModel @Inject constructor(
     private val settingsDataStore: SettingsDataStore,
+    private val credentialStore: CredentialStore,
 ) : ViewModel() {
 
     /**
@@ -44,17 +49,52 @@ class OnboardingViewModel @Inject constructor(
             )
 
     /**
-     * 用户完成引导（N6）：
+     * 用户完成引导（N6 + H）：
+     * - H：引导页「快速配置（可选）」——Bangumi 个人 Token 与 AI 增强直接在首启填写，此处一次性加密保存
+     *   到 `CredentialStore`（与设置页同一落盘路径）；均可留空跳过，空值不写入。敏感值绝不写 DataStore / 日志（RC.00 1.2）。
      * - 把 Bangumi API 设为社区反代（[SettingsState.COMMUNITY_PROXY_BANGUMI_API_BASE_URL]）——官方地址在部分网络
      *   需特殊环境，反代通常可直连；**仅首启写入**（引导只展示一次），不影响已配置官方地址的老用户。
-     * - [consentToProxyToken] 决定是否允许个人 Token 发往该非官方地址（R56）：未同意时仅公共搜索经反代、Token 不发送。
+     * - [OnboardingSetup.consentToProxyToken] 决定是否允许个人 Token 发往该非官方地址（R56）：未同意时仅公共搜索经反代、Token 不发送。
      * - 持久化 `onboardingShown = true`，引导不再展示。
      */
-    fun onOnboardingComplete(consentToProxyToken: Boolean) {
+    fun onOnboardingComplete(setup: OnboardingSetup) {
         viewModelScope.launch {
+            // H：Bangumi 个人 Token（可选）——与既有凭据合并，仅覆盖 token（首启通常无既有值，合并仅为鲁棒）。
+            val bangumiToken = setup.bangumiToken.trim().takeIf { it.isNotEmpty() }
+            if (bangumiToken != null) {
+                val existing = runCatching { credentialStore.get(SourceId.BANGUMI) }.getOrNull()
+                credentialStore.put(SourceId.BANGUMI, (existing ?: SecretBundle()).copy(token = bangumiToken))
+            }
+            // H：AI 增强（可选）——有 API Key 才保存；同时固化 provider 形态（由 baseUrl 推断）使调用时生效。
+            val aiApiKey = setup.aiApiKey.trim().takeIf { it.isNotEmpty() }
+            if (aiApiKey != null) {
+                val baseUrl = setup.aiBaseUrl.trim().takeIf { it.isNotEmpty() }
+                val model = setup.aiModel.trim().takeIf { it.isNotEmpty() }
+                val existing = runCatching { credentialStore.get(SourceId.AI_PROVIDER) }.getOrNull()
+                credentialStore.put(
+                    SourceId.AI_PROVIDER,
+                    (existing ?: SecretBundle()).copy(apiKey = aiApiKey, baseUrl = baseUrl, model = model),
+                )
+                settingsDataStore.setAiProviderId(inferProviderId(baseUrl).name)
+            }
             settingsDataStore.setBangumiApiBaseUrl(SettingsState.COMMUNITY_PROXY_BANGUMI_API_BASE_URL)
-            settingsDataStore.setBangumiNonOfficialTokenConsent(consentToProxyToken)
+            settingsDataStore.setBangumiNonOfficialTokenConsent(setup.consentToProxyToken)
             settingsDataStore.setOnboardingShown(true)
+        }
+    }
+
+    /**
+     * H：由 OpenAI 兼容端点 [baseUrl] 推断 provider 形态（与设置页的显式选择等价）。
+     * 引导页默认推荐 DeepSeek；未识别的自定义端点归为 CUSTOM。
+     */
+    private fun inferProviderId(baseUrl: String?): ProviderId {
+        val u = baseUrl?.lowercase().orEmpty()
+        return when {
+            u.isBlank() || u.contains("deepseek") -> ProviderId.DEEPSEEK
+            u.contains("openrouter") -> ProviderId.OPENROUTER
+            u.contains("googleapis") || u.contains("generativelanguage") -> ProviderId.GEMINI
+            u.contains("openai.com") -> ProviderId.OPENAI
+            else -> ProviderId.CUSTOM_OPENAI_COMPAT
         }
     }
 

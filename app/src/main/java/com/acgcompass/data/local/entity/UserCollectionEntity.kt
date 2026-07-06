@@ -23,6 +23,8 @@ import androidx.room.PrimaryKey
  * @property updatedAt 本地写入时间。
  * @property syncedAt 最近一次同步时间。
  * @property sourceUpdatedAt 源侧更新时间（Bangumi `updated_at`），用于冲突判断；缺失为 `null`。
+ * @property isPrivate 该条收藏是否「仅自己可见 / 私密」（Bangumi `private`）。为 `true` 时评分 / 短评 / 标签
+ *   不在个人主页公开展示；本地持久化以便编辑对话框回显当前可见性、并避免保存时误改（M）。
  */
 @Entity(
     tableName = "user_collections",
@@ -42,4 +44,5 @@ data class UserCollectionEntity(
     val updatedAt: Long,
     val syncedAt: Long,
     val sourceUpdatedAt: String?,
+    val isPrivate: Boolean = false,
 )

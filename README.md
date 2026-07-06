@@ -1,13 +1,17 @@
-<p align="center">
-  <img src="docs/icon.svg" alt="ACG Compass app icon" width="112" height="112">
-</p>
+<div align="center">
+
+<img src="docs/icon.svg" alt="ACG Compass app icon" width="120" height="120">
 
 # ACG Compass · 多源 ACG 口味罗盘
+
+**跨源聚合 · 口味匹配 · 个性化推荐 · 无剧透 AI 评价**
 
 [![Platform](https://img.shields.io/badge/platform-Android%208.0%2B-3DDC84?logo=android&logoColor=white)](#environment)
 [![Language](https://img.shields.io/badge/Kotlin-2.0-7F52FF?logo=kotlin&logoColor=white)](#tech-stack)
 [![UI](https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4?logo=jetpackcompose&logoColor=white)](#tech-stack)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+</div>
 
 多源 ACG（动画 / 游戏 / 视觉小说）发现与「口味匹配」Android 应用。聚合 Bangumi、AniList、Jikan(MyAnimeList)、VNDB 等数据源，跨源匹配同一作品，并基于用户长期口味提供个性化推荐与无剧透 AI 评价。
 
@@ -37,6 +41,7 @@
 - **口味画像** — 从你评价过的作品构建长期正 / 负向偏好，**仅采用作品自身的 Bangumi 社区标签**并过滤年份 / 媒介格式等噪声标签。
 - **口味匹配度** — 详情页给出「这部作品与我的口味有多契合」，以长期口味为主、平台评分为辅，可解释，数据不足时显式标注低置信。
 - **今晚看什么** — 按当前心情 / 接受程度进行**硬性标签筛选**（排除冲突题材），再结合长期口味与社区口碑排序；无合适候选时引导放宽条件。
+- **探索队列** — 卡片式逐部探索「还没接触」的新作品：单击卡片翻面看简介，左滑略过 / 右滑加入待补池，冷却机制避免重复推荐。
 - **无剧透 AI 评价雷达 / 评论摘要** — 聚合社区评论，输出亮点 / 雷点 / 制作 / 节奏，全程剧透过滤。
 - **榜单与发现** — 公共榜单、跨平台评分差异、题材筛选。
 - **收藏与进度同步** — 与 Bangumi 收藏 / 观看状态双向同步。

@@ -22,13 +22,13 @@ class SettingsStateTest : StringSpec({
         state.onboardingShown shouldBe false
     }
 
-    "默认数据源仅启用 P0 主源 Bangumi" {
+    "默认多源开箱：Bangumi / Jikan / VNDB 启用，AniList / MAL 需手动开启（0.15.0 起 N6）" {
         val state = SettingsState()
         state.bangumiEnabled shouldBe true
         state.anilistEnabled shouldBe false
-        state.jikanEnabled shouldBe false
+        state.jikanEnabled shouldBe true
         state.malEnabled shouldBe false
-        state.vndbEnabled shouldBe false
+        state.vndbEnabled shouldBe true
     }
 
     "默认主题为跟随系统并启用动态取色，默认记录时光机快照" {

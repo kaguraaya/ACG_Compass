@@ -145,6 +145,8 @@ data class PersonalUiModel(
     val progressEditable: Boolean = true,
     /** N16：是否 Bangumi 关联（有 Bangumi 词条/评分）。否则只展示「加入待补池」，不展示我的状态/评分。 */
     val recordEditable: Boolean = true,
+    /** M：该条记录是否「仅自己可见 / 私密」（Bangumi private）。用于展示锁标 + 编辑对话框回显。 */
+    val isPrivate: Boolean = false,
 )
 
 /**
@@ -434,6 +436,7 @@ private fun MediaType.label(): String = when (this) {
     MediaType.NOVEL -> "小说"
     MediaType.GAME -> "游戏"
     MediaType.VN -> "视觉小说"
+    MediaType.OTHER -> "其他"
 }
 
 /** 体量 / 时长描述（按媒介各取所需）；全部缺失返回 `null`（→「暂无数据」）。 */
@@ -571,13 +574,14 @@ private fun Work.toPersonalUiModel(
     totalEpisodes = units.episodes?.takeIf { it > 0 },
     progressEditable = mediaType == MediaType.ANIME,
     recordEditable = bangumiBacked,
+    isPrivate = collectionState?.isPrivate ?: false,
 )
 
 /** 进度文案按媒介类型选择量词（动画/漫画/小说=集·话，其余统一「进度」）。 */
 private fun Work.progressLabel(progress: Int): String = when (mediaType) {
     MediaType.ANIME -> "已看 $progress 集"
     MediaType.MANGA, MediaType.NOVEL -> "已读 $progress 话"
-    MediaType.GAME, MediaType.VN -> "进度 $progress"
+    MediaType.GAME, MediaType.VN, MediaType.OTHER -> "进度 $progress"
 }
 
 /** 决策区（RC.07.05）：综合口味匹配、社区共识与补完成本派生推荐 / 不推荐理由与适合心情。 */
@@ -980,6 +984,7 @@ private fun estimateTotalMinutes(units: Units, mediaType: MediaType): Int? = whe
         units.episodes?.let { eps -> eps * (units.episodeMinutes ?: DEFAULT_EPISODE_MINUTES) }
     MediaType.GAME, MediaType.VN -> units.estPlayMinutes
     MediaType.MANGA, MediaType.NOVEL -> units.volumes?.let { it * MINUTES_PER_VOLUME }
+    MediaType.OTHER -> null
 }
 
 /** 「今晚可看完」上限（分钟）：约一个晚上。 */

@@ -23,12 +23,17 @@ import com.acgcompass.domain.usecase.TasteTagTaxonomy
  *   [BangumiTagDto.toDomainTag] 在已知分类上下文时显式映射。
  */
 
-/** Bangumi `type` → 领域 [MediaType]；未知 / 缺失回退 [MediaType.ANIME]（P0 主源以动画为主）。 */
+/**
+ * Bangumi `type` → 领域 [MediaType]。
+ *
+ * L 修复：音乐(3) / 三次元·真人(6) / 未知统一归 [MediaType.OTHER]，**不再默认 [MediaType.ANIME]**——
+ * 否则音乐等非动画条目会被误标为动画，泄漏进发现池 / 推荐 / 探索队列（均按 `==ANIME` 过滤）与口味校准池。
+ */
 fun mapBangumiMediaType(type: Int?): MediaType = when (type) {
     BangumiSubjectType.ANIME -> MediaType.ANIME
     BangumiSubjectType.BOOK -> MediaType.MANGA
     BangumiSubjectType.GAME -> MediaType.GAME
-    else -> MediaType.ANIME
+    else -> MediaType.OTHER
 }
 
 /** 从 Bangumi 日期串（如 `2023-04-07`）解析年份；无法解析返回 `null`（不臆造）。 */

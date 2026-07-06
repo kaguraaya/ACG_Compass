@@ -14,6 +14,7 @@ import com.acgcompass.data.local.dao.RouteNodeDao
 import com.acgcompass.data.local.dao.SnapshotDao
 import com.acgcompass.data.local.dao.SourceLinkDao
 import com.acgcompass.data.local.dao.TagDao
+import com.acgcompass.data.local.dao.TagDimensionDao
 import com.acgcompass.data.local.dao.TasteDao
 import com.acgcompass.data.local.dao.UserCollectionDao
 import com.acgcompass.data.local.dao.WorkDao
@@ -116,4 +117,8 @@ object DatabaseModule {
     @Singleton
     fun provideRecommendationExposureDao(db: AcgCompassDatabase): RecommendationExposureDao =
         db.recommendationExposureDao()
+
+    @Provides
+    @Singleton
+    fun provideTagDimensionDao(db: AcgCompassDatabase): TagDimensionDao = db.tagDimensionDao()
 }

@@ -1,7 +1,7 @@
 package com.acgcompass.domain.model
 
 /**
- * 四类 AI / 规则任务类型（RC.14.02）。包含 [UNKNOWN] 以兜底未知持久化值。
+ * AI / 规则任务类型（RC.14.02）。包含 [UNKNOWN] 以兜底未知持久化值。
  */
 enum class AiTaskType {
     SPOILER_RADAR,
@@ -9,6 +9,9 @@ enum class AiTaskType {
     RECOMMENDER,
     ROUTE_MAP,
     TASTE_MATCH,
+
+    /** N3：社区标签 → 口味维度（[com.acgcompass.domain.taste.TasteCategory]）批量分类，结果缓存供画像/评分复用。 */
+    TAG_CLASSIFY,
     UNKNOWN,
     ;
 

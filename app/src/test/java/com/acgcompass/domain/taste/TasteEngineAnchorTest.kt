@@ -98,4 +98,21 @@ class TasteEngineAnchorTest : StringSpec({
         val r = compute(feature("x", listOf("奇幻" to 10)), empty)
         (r.score in 5..95) shouldBe true
     }
+
+    // RC.15 根因回归：LOO 校准去偏。修复前训练样本自我重合抬高 μ，使「有真实重合但非完美命中」的
+    // 未评分候选塌到十几分（实测「随便搜感兴趣的都十几分」）；去偏后应回到合理中段、且关系稳定。
+    "LOO 去偏：与画像有真实重合的未评分作品不再塌到十几分" {
+        // 修复前塌到 10-19 分；LOO 去偏后至少脱离「十几分」区间（真实多样本画像下通常 50-65）。
+        val mid = compute(feature("c_mid", listOf("奇幻" to 35, "冒险" to 25)), profile)
+        (mid.score >= 30) shouldBe true
+    }
+
+    "LOO 去偏：强命中 ≥ 部分契合 ≥ 反口味（关系稳定，分布单调）" {
+        val strong = compute(feature("c_s", listOf("奇幻" to 60, "异世界" to 50, "智斗" to 40)), profile)
+        val mid = compute(feature("c_m", listOf("奇幻" to 30, "冒险" to 20)), profile)
+        val anti = compute(feature("c_a", listOf("恋爱" to 60, "日常" to 50)), profile)
+        (strong.score >= mid.score) shouldBe true
+        (mid.score >= anti.score) shouldBe true
+        (strong.score - anti.score >= 20) shouldBe true
+    }
 })

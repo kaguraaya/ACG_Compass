@@ -17,6 +17,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -27,6 +28,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -55,8 +58,8 @@ fun OnboardingRoute(
 ) {
     OnboardingScreen(
         state = OnboardingUiState.DEFAULT,
-        onConfirm = { consented ->
-            viewModel.onOnboardingComplete(consentToProxyToken = consented)
+        onConfirm = { setup ->
+            viewModel.onOnboardingComplete(setup)
             onFinished()
         },
         modifier = modifier,
@@ -71,10 +74,16 @@ fun OnboardingRoute(
 @Composable
 fun OnboardingScreen(
     state: OnboardingUiState,
-    onConfirm: (Boolean) -> Unit,
+    onConfirm: (OnboardingSetup) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var consented by remember { mutableStateOf(false) }
+    // H：快速配置（可选）草稿——仅内存，随「开始使用」一次性上抛加密保存（空值不写）。
+    var bangumiToken by remember { mutableStateOf("") }
+    var aiApiKey by remember { mutableStateOf("") }
+    var aiBaseUrl by remember { mutableStateOf(OnboardingDefaults.AI_BASE_URL) }
+    var aiModel by remember { mutableStateOf(OnboardingDefaults.AI_MODEL) }
+    var revealSecrets by remember { mutableStateOf(false) }
     Scaffold(modifier = modifier.fillMaxSize()) { innerPadding ->
         Column(
             modifier = Modifier
@@ -103,6 +112,20 @@ fun OnboardingScreen(
                 Spacer(Modifier.height(12.dp))
             }
 
+            // H：快速配置（可选）——直接在引导页填写主要设置项（Bangumi 个人 Token + AI 增强）。
+            QuickSetupSection(
+                bangumiToken = bangumiToken,
+                onBangumiTokenChange = { bangumiToken = it },
+                aiApiKey = aiApiKey,
+                onAiApiKeyChange = { aiApiKey = it },
+                aiBaseUrl = aiBaseUrl,
+                onAiBaseUrlChange = { aiBaseUrl = it },
+                aiModel = aiModel,
+                onAiModelChange = { aiModel = it },
+                revealSecrets = revealSecrets,
+                onToggleReveal = { revealSecrets = !revealSecrets },
+            )
+
             Spacer(Modifier.height(8.dp))
             Row(
                 modifier = Modifier
@@ -121,7 +144,17 @@ fun OnboardingScreen(
             }
             Spacer(Modifier.height(16.dp))
             Button(
-                onClick = { onConfirm(consented) },
+                onClick = {
+                    onConfirm(
+                        OnboardingSetup(
+                            consentToProxyToken = consented,
+                            bangumiToken = bangumiToken,
+                            aiApiKey = aiApiKey,
+                            aiBaseUrl = aiBaseUrl,
+                            aiModel = aiModel,
+                        ),
+                    )
+                },
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(text = state.confirmLabel)
@@ -185,6 +218,123 @@ private fun HighlightCard(
             }
         }
     }
+}
+
+/**
+ * H：首启引导「快速配置（可选）」——把设置主要项（Bangumi 个人 Token + AI 增强）搬进引导页直接填写。
+ * 均可留空跳过；敏感值经宆口 [OnboardingSetup] 上抛，由 ViewModel 加密保存到 `CredentialStore`（RC.00 1.2）。
+ */
+@Composable
+private fun QuickSetupSection(
+    bangumiToken: String,
+    onBangumiTokenChange: (String) -> Unit,
+    aiApiKey: String,
+    onAiApiKeyChange: (String) -> Unit,
+    aiBaseUrl: String,
+    onAiBaseUrlChange: (String) -> Unit,
+    aiModel: String,
+    onAiModelChange: (String) -> Unit,
+    revealSecrets: Boolean,
+    onToggleReveal: () -> Unit,
+) {
+    val mask = if (revealSecrets) VisualTransformation.None else PasswordVisualTransformation()
+    Text(
+        text = "快速配置（可选，可跳过）",
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.SemiBold,
+    )
+    Spacer(Modifier.height(4.dp))
+    Text(
+        text = "以下均可留空，稍后在「我的 → 设置」补填。密钥仅加密保存在本机，不会上传。",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(12.dp))
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Text("Bangumi 个人同步", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "粘贴 Bangumi Access Token 即可同步你的收藏 / 评分（在 ${OnboardingDefaults.BANGUMI_TOKEN_HELP_URL} 生成；" +
+                    "也可稍后在设置里用 Bangumi 登录）。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = bangumiToken,
+                onValueChange = onBangumiTokenChange,
+                label = { Text("Access Token（可选）") },
+                singleLine = true,
+                visualTransformation = mask,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+    Spacer(Modifier.height(12.dp))
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Text("AI 增强", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "填入 OpenAI 兼容服务的 API Key 可启用口味匹配 / 无剧透雷达（推荐 DeepSeek）；" +
+                    "未填则自动回退本地规则。AI 调用会消耗你所配置服务的额度。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = aiApiKey,
+                onValueChange = onAiApiKeyChange,
+                label = { Text("API Key（可选）") },
+                singleLine = true,
+                visualTransformation = mask,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = aiBaseUrl,
+                onValueChange = onAiBaseUrlChange,
+                label = { Text("Base URL") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = aiModel,
+                onValueChange = onAiModelChange,
+                label = { Text("模型名") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onToggleReveal() }
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(checked = revealSecrets, onCheckedChange = { onToggleReveal() })
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = "显示我输入的 Token / API Key",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    Spacer(Modifier.height(4.dp))
 }
 
 @Preview(showBackground = true)

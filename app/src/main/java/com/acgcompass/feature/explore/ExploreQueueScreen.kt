@@ -1,6 +1,7 @@
 package com.acgcompass.feature.explore
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -19,7 +20,9 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -39,12 +42,16 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -84,7 +91,7 @@ fun ExploreQueueRoute(
 }
 
 /**
- * 探索队列页（无状态）。卡片堆叠 + 左右滑手势（左滑加入待补池 / 右滑暂不感兴趣）+ 底部操作按钮；
+ * 探索队列页（无状态）。卡片堆叠 + 左右滑手势（右滑加入待补池 / 左滑暂不感兴趣）+ 底部操作按钮；
  * 口味匹配度为视觉核心（大字 + 进度条），社区评分弱化到详情页。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -164,90 +171,69 @@ private fun ReadyContent(
     // key 绑定 workId：切换到下一张时重建归零，避免位移残留。
     val offsetX = remember(card.workId) { Animatable(0f) }
     val swipeThreshold = 220f
+    // D：单击翻面——正面（封面 + 匹配度）↔ 背面（作品简介）。rotation 与 flipped 均按 workId 重建，
+    // 保证切换到下一张总从正面开始（不会闪现上一张的背面）。
+    var flipped by remember(card.workId) { mutableStateOf(false) }
+    val rotation = remember(card.workId) { Animatable(0f) }
+    LaunchedEffect(card.workId, flipped) {
+        rotation.animateTo(if (flipped) 180f else 0f, animationSpec = tween(durationMillis = 420))
+    }
 
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
     ) {
-        Card(
+        // E：卡片区域占据剩余空间并在内容过长时可竖向滚动（内容短时居中），
+        // 避免长简介 / 多标签把底部计数与操作按钮挤出屏幕（间歇性截断根因）。
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .offset { IntOffset(offsetX.value.roundToInt(), 0) }
-                .pointerInput(card.workId) {
-                    detectHorizontalDragGestures(
-                        onDragEnd = {
-                            scope.launch {
-                                when {
-                                    offsetX.value <= -swipeThreshold -> { offsetX.animateTo(-1600f); onLike() }
-                                    offsetX.value >= swipeThreshold -> { offsetX.animateTo(1600f); onSkip() }
-                                    else -> offsetX.animateTo(0f)
-                                }
-                            }
-                        },
-                        onHorizontalDrag = { _, dragAmount ->
-                            scope.launch { offsetX.snapTo(offsetX.value + dragAmount) }
-                        },
-                    )
-                }
-                .clickable { onOpenWork(card.workId) },
-            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+                .weight(1f)
+                .fillMaxWidth(),
+            contentAlignment = Alignment.Center,
         ) {
-            AsyncImage(
-                model = card.coverUrl,
-                contentDescription = card.title,
-                contentScale = ContentScale.Crop,
+            Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(220.dp)
-                    .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)),
-            )
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(card.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                if (card.meta.isNotBlank()) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(card.meta, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+                    .graphicsLayer {
+                        rotationY = rotation.value
+                        cameraDistance = 12f * density
+                    }
+                    .pointerInput(card.workId) {
+                        detectHorizontalDragGestures(
+                            onDragEnd = {
+                                scope.launch {
+                                    when {
+                                        // K：右滑=加入待补池，左滑=暂不感兴趣——与底部按钮左右位置、
+                                        // Tinder（右滑喜欢）/ 对话框（确认在右）约定一致。
+                                        offsetX.value >= swipeThreshold -> { offsetX.animateTo(1600f); onLike() }
+                                        offsetX.value <= -swipeThreshold -> { offsetX.animateTo(-1600f); onSkip() }
+                                        else -> offsetX.animateTo(0f)
+                                    }
+                                }
+                            },
+                            onHorizontalDrag = { _, dragAmount ->
+                                scope.launch { offsetX.snapTo(offsetX.value + dragAmount) }
+                            },
+                        )
+                    }
+                    // D：单击翻面（正/背面切换）；进入详情改由背面「查看详情」按钮。
+                    .clickable { flipped = !flipped },
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+            ) {
+                // rotationY>90° 时朝向背面：显示简介，并对内容反向旋转 180° 以免文字镜像。
+                if (rotation.value <= 90f) {
+                    ExploreCardFront(card)
+                } else {
+                    Box(modifier = Modifier.graphicsLayer { rotationY = 180f }) {
+                        ExploreCardBack(card = card, onOpenWork = onOpenWork)
+                    }
                 }
-                Spacer(Modifier.height(14.dp))
-                // 口味匹配度——视觉核心（核心差异化）。
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("口味匹配度", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        card.tastePercent,
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                }
-                Spacer(Modifier.height(6.dp))
-                LinearProgressIndicator(
-                    progress = { card.tasteFraction },
-                    modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(card.tasteQualitative, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.height(12.dp))
-                Text(card.reason, style = MaterialTheme.typography.bodyMedium)
-                if (card.tags.isNotEmpty()) {
-                    Spacer(Modifier.height(12.dp))
-                    TagRow(card.tags)
-                }
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    "← 左滑加入待补池    右滑暂不感兴趣 →",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.fillMaxWidth(),
-                    textAlign = TextAlign.Center,
-                )
             }
         }
 
-        Spacer(Modifier.height(20.dp))
+        // E：底部计数 + 操作按钮固定在卡片下方，始终可见（不随卡片内容高度被挤出屏幕）。
+        Spacer(Modifier.height(16.dp))
         Text("$position / $total", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(12.dp))
         Row(
@@ -264,6 +250,109 @@ private fun ReadyContent(
                 Spacer(Modifier.width(6.dp))
                 Text("加入待补池")
             }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+/** D：卡片正面——封面 + 口味匹配度（视觉核心）+ 推荐理由 + 标签；底部提示可单击翻面看简介。 */
+@Composable
+private fun ExploreCardFront(card: ExploreCardUiModel) {
+    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+        AsyncImage(
+            model = card.coverUrl,
+            contentDescription = card.title,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(220.dp)
+                .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)),
+        )
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(card.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            if (card.meta.isNotBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text(card.meta, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.height(14.dp))
+            // 口味匹配度——视觉核心（核心差异化）。
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("口味匹配度", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    card.tastePercent,
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            LinearProgressIndicator(
+                progress = { card.tasteFraction },
+                modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(card.tasteQualitative, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(12.dp))
+            Text(card.reason, style = MaterialTheme.typography.bodyMedium)
+            if (card.tags.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                TagRow(card.tags)
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "点击卡片看简介 · ← 左滑暂不感兴趣　右滑加入待补池 →",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center,
+            )
+        }
+    }
+}
+
+/** D：卡片背面——封面 + 作品简介（缺失时「暂无简介」不伪造）+「查看详情」入口 + 翻回提示。 */
+@Composable
+private fun ExploreCardBack(card: ExploreCardUiModel, onOpenWork: (String) -> Unit) {
+    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+        AsyncImage(
+            model = card.coverUrl,
+            contentDescription = card.title,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(220.dp)
+                .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)),
+        )
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(card.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(12.dp))
+            Text("简介", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                card.synopsis ?: "暂无简介（点击「查看详情」在详情页加载）",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (card.synopsis != null) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            Spacer(Modifier.height(16.dp))
+            Button(onClick = { onOpenWork(card.workId) }, modifier = Modifier.fillMaxWidth()) {
+                Text("查看详情")
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "再次点击卡片翻回正面",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center,
+            )
         }
     }
 }

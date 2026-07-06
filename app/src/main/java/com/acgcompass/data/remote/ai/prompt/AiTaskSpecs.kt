@@ -72,6 +72,12 @@ object AiTaskSpecs {
             responseFormat = AiResponseFormat.JsonSchema("taste_match", tasteMatchSchema()),
             maxOutputTokens = 1200,
         )
+        is AiTask.TagClassify -> AiTaskSpec(
+            systemPrompt = tagClassifyPrompt(),
+            responseFormat = AiResponseFormat.JsonSchema("tag_classify", tagClassifySchema()),
+            // 每标签一行 {tag,dimension}，一批数十标签约需千级 token；预留充足空间避免 JSON 被截断。
+            maxOutputTokens = 2000,
+        )
     }
 
     /**
@@ -135,6 +141,26 @@ object AiTaskSpecs {
         appendLine("recommendation 取值限定为 MUST / OPTIONAL / SKIP / RECAP。")
         appendLine("如果资料不足以确定确切的观看顺序，必须把 routeConfirmed 设为 false，且不要编造一个确定的 orderIndex 顺序。")
         appendLine("输出必须是符合目标 schema 的 JSON。")
+        appendLine()
+        append(SpoilerGuard.SYSTEM_PROMPT_RULES)
+    }
+
+    private fun tagClassifyPrompt(): String = buildString {
+        appendLine("你是一个 ACG 社区标签分类器。给定一批来自 Bangumi 的社区标签，请把**每一个**标签归入下列唯一维度之一，")
+        appendLine("只输出维度的英文 key。维度定义：")
+        appendLine("- topic（题材）：类型/情绪/设定/元素，如 奇幻、治愈、校园、异世界、悬疑、后宫、百合。")
+        appendLine("- device（情节装置）：叙事/结构手法，如 时间循环、下克上、多线叙事、无限流、叙述性诡计。")
+        appendLine("- xp（角色类型/萌属性）：角色原型或属性，如 病娇、傲娇、黑长直、猫娘、大小姐。")
+        appendLine("- character（角色名）：具体登场角色的人名，如 牧濑红莉栖、亚丝娜。")
+        appendLine("- staff（制作人员）：导演/脚本/原作/人设等真实人名或职能，如 虚渊玄、新海诚。")
+        appendLine("- cv（声优名）：配音演员姓名，如 花泽香菜、宫野真守。")
+        appendLine("- source（改编来源/制作方）：如 轻小说改、游戏改、漫画改、京都动画、ufotable。")
+        appendLine("- time（年代/季度）：如 2011年10月、2014年4月、2024春。")
+        appendLine("- meme（社区梗/评价黑话）：如 神作、爷青回、致郁系神作、经费燃烧、名作之壁。")
+        appendLine("- noise（噪声）：无区分度的媒介格式/放送状态/地区，或无意义标签，如 TV、剧场版、完结、日本。")
+        appendLine("分类原则：优先判断是否属于 device/xp/character/staff/cv/source/time/meme/noise 这些更具体的维度；")
+        appendLine("确实是内容题材才归 topic；无法判断或明显无信息量的归 noise，不要编造。")
+        appendLine("必须为输入里的每个标签各输出一条 {tag, dimension}，tag 原样回填。输出必须是符合目标 schema 的合法 JSON。")
         appendLine()
         append(SpoilerGuard.SYSTEM_PROMPT_RULES)
     }
@@ -315,6 +341,35 @@ object AiTaskSpecs {
         required = listOf("nodes", "confidence", "routeConfirmed"),
     )
 
+    private fun tagClassifySchema(): JsonObject = objectSchema(
+        properties = buildJsonObject {
+            putJsonObject("items") {
+                put("type", "array")
+                put("description", "每个输入标签的分维结果")
+                putJsonObject("items") {
+                    put("type", "object")
+                    putJsonObject("properties") {
+                        putJsonObject("tag") { put("type", "string"); put("description", "原始标签，原样回填") }
+                        putJsonObject("dimension") {
+                            put("type", "string")
+                            put(
+                                "enum",
+                                listOf(
+                                    "topic", "device", "xp", "character", "staff",
+                                    "cv", "source", "time", "meme", "noise",
+                                ).toJsonStringArray(),
+                            )
+                        }
+                    }
+                    put("required", listOf("tag", "dimension").toJsonStringArray())
+                    put("additionalProperties", false)
+                }
+            }
+            put("confidence", confidenceSchema())
+        },
+        required = listOf("items", "confidence"),
+    )
+
     /** 任务类型 → 人类可读名（用于诊断 / 日志，非敏感）。 */
     fun displayName(type: AiTaskType): String = when (type) {
         AiTaskType.SPOILER_RADAR -> "防剧透雷达"
@@ -322,6 +377,7 @@ object AiTaskSpecs {
         AiTaskType.RECOMMENDER -> "今晚推荐"
         AiTaskType.ROUTE_MAP -> "路线图"
         AiTaskType.TASTE_MATCH -> "口味匹配"
+        AiTaskType.TAG_CLASSIFY -> "标签分维分类"
         AiTaskType.UNKNOWN -> "未知任务"
     }
 }

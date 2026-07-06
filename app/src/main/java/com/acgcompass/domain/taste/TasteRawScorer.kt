@@ -18,8 +18,13 @@ object TasteRawScorer {
         val topicDeviceTags: Set<String>,
     )
 
-    /** 把一部作品的社区标签（带计数）+ 结构化 staff/CV/角色 特征化为各大类的 tag→q。 */
-    fun featurize(feature: WorkFeature): Featurized {
+    /**
+     * 把一部作品的社区标签（带计数）+ 结构化 staff/CV/角色 特征化为各大类的 tag→q。
+     *
+     * N3：[overrides]（清洗后标签 → 维度）为 AI 分维分类缓存，仅作用于本地规则兜底为题材的未知标签（见
+     * [TagClassifier.classify]）。缺省空表 → 行为与之前完全一致，AI 未配置 / 未分类时全回退本地。
+     */
+    fun featurize(feature: WorkFeature, overrides: Map<String, TasteCategory> = emptyMap()): Featurized {
         val ctx = TagClassifier.Context.of(
             staff = feature.staff,
             characters = feature.characters,
@@ -39,7 +44,7 @@ object TasteRawScorer {
         for (tc in feature.tagCounts) {
             val cleaned = TagClassifier.clean(tc.name)
             if (cleaned.isEmpty()) continue
-            val cat = TagClassifier.classify(tc.name, ctx)
+            val cat = TagClassifier.classify(tc.name, ctx, overrides)
             if (cat == TasteCategory.NOISE) continue
             val q = TasteScoringParams.tagStrength(tc.count, maxCount)
             add(cat, cleaned, q)
@@ -67,22 +72,36 @@ object TasteRawScorer {
         return posPart - lambda * negPart
     }
 
-    /** 题材组合命中分 `sim_combo = Σ_{C⊆tags(x)} strength(C)`。 */
+    /**
+     * 题材组合命中分（RC.16 归一化）：`sim_combo = Σ_{命中} strength / (Σ_{全部} strength + ε) ∈ [0,1]`。
+     *
+     * 修复前用「命中组合 strength 之和」的**未归一化绝对量**：`strength=signed_support/|C|^0.3` 随样本数
+     * 线性膨胀，大样本画像下 combo 项可达 7+，彻底压倒被 `||U^+||` 归一到 ~0.05 的单标签项 → rawZ 几乎
+     * 只由「是否命中画像既有热门组合」决定：续作 / 同题材扎堆番爆高，只命中单个题材的番与反口味番同塌到
+     * 十几分（与实测「随便搜感兴趣的番都十几二十分、只有续作 / 高重合才高」完全吻合）。归一化为「命中占
+     * 画像组合偏好的比例」后与单标签 posPart 同尺度，恢复十二维线性融合的平衡。
+     */
     fun simCombo(topicDeviceTags: Set<String>, combos: List<TopicCombo>): Double {
         if (topicDeviceTags.isEmpty() || combos.isEmpty()) return 0.0
-        var s = 0.0
+        var hit = 0.0
+        var total = 0.0
         for (combo in combos) {
-            if (combo.tags.isNotEmpty() && topicDeviceTags.containsAll(combo.tags)) s += combo.strength
+            if (combo.tags.isEmpty()) continue
+            total += combo.strength
+            if (topicDeviceTags.containsAll(combo.tags)) hit += combo.strength
         }
-        return s
+        return if (total > 0.0) hit / (total + TasteScoringParams.EPSILON) else 0.0
     }
 
     /**
      * 十二维线性融合 raw `z(x)`（候选作品对画像的综合相似度，未校准）。
      * 候选无用户短评，故 [TasteCategory.COMMENT] 项恒 0（评论语义只在画像侧建模）。
      */
-    fun rawScore(feature: WorkFeature, profile: AdvancedTasteProfile): Double =
-        rawScore(featurize(feature), feature, profile)
+    fun rawScore(
+        feature: WorkFeature,
+        profile: AdvancedTasteProfile,
+        overrides: Map<String, TasteCategory> = emptyMap(),
+    ): Double = rawScore(featurize(feature, overrides), feature, profile)
 
     /** 复用已 featurize 的结果计算 raw z（批量评分时省一次 featurize）。 */
     fun rawScore(f: Featurized, feature: WorkFeature, profile: AdvancedTasteProfile): Double {

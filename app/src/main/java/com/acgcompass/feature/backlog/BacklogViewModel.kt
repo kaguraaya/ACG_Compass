@@ -265,6 +265,8 @@ class BacklogViewModel @Inject constructor(
                     updatedAt = now,
                     syncedAt = existing?.syncedAt ?: now,
                     sourceUpdatedAt = existing?.sourceUpdatedAt,
+                    // M：归档到吃灰馆不改可见性，保留既有 private（避免误将私密记录改回公开）。
+                    isPrivate = existing?.isPrivate ?: false,
                 ),
             )
             val subjectId = workId.toIntOrNull() ?: return@runCatching

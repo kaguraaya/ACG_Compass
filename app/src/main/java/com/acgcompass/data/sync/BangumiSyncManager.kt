@@ -190,6 +190,8 @@ class BangumiSyncManager @Inject constructor(
             updatedAt = now,
             syncedAt = now,
             sourceUpdatedAt = dto.updatedAt,
+            // M：同步 Bangumi 收藏可见性（private=仅自己可见），本地持久化以便详情页回显与保存时防误改。
+            isPrivate = dto.private,
         )
     }
 

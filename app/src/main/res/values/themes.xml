@@ -3,8 +3,22 @@
     <!--
         Base application theme. The real visual identity is supplied by Jetpack Compose
         (Material 3 + dynamic color) in core/designsystem. This XML theme only provides a
-        clean launch surface and inherits a Material 3 DayNight parent so dark mode is honored
-        before Compose draws (RC.03.05 / RC.03.08).
+        clean launch surface. It is DayNight-aware via a values-night override plus a DayNight
+        windowBackground color (@color/launch_background) so the launch window matches the system
+        light/dark mode BEFORE Compose draws — fixing the bright flash on dark-mode cold start
+        (O / RC.03.05 / RC.03.08). Light variant below; dark variant in values-night/themes.xml.
     -->
-    <style name="Theme.AcgCompass" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.AcgCompass" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/launch_background</item>
+    </style>
+
+    <!--
+        P：动态开屏主题（androidx core-splashscreen）。冷启动即时以品牌底色 + Hoshimi 图标覆盖，
+        随后 Compose HoshimiSplash 接管播放「星形指针旋转 + 四芒星点亮」动效，再切到 postSplashScreenTheme。
+        windowSplashScreenBackground 复用 @color/launch_background（DayNight），亮/暗均不闪色（承接 O）。
+    -->
+    <style name="Theme.Hoshimi.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/launch_background</item>
+        <item name="postSplashScreenTheme">@style/Theme.AcgCompass</item>
+    </style>
 </resources>

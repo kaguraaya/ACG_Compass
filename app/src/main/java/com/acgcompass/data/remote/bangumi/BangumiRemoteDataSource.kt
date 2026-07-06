@@ -178,6 +178,7 @@ class BangumiRemoteDataSource @Inject constructor(
         volStatus: Int? = null,
         comment: String? = null,
         tags: List<String>? = null,
+        private: Boolean? = null,
     ): AppResult<Unit> = runCatchingApp {
         val body = BangumiUpdateCollectionRequest(
             type = type,
@@ -189,6 +190,8 @@ class BangumiRemoteDataSource @Inject constructor(
             volStatus = null,
             comment = comment,
             tags = tags,
+            // M：可见性（仅自己可见）。null 时按 PATCH 语义不改动服务端既有可见性。
+            private = private,
         )
         // I5/I7：Bangumi v0 用 PATCH 修改**已存在**收藏；条目尚未收藏会 404，此时回退 POST 新建。
         var method = "PATCH"

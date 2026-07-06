@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- O：启动窗口底色（暗色）——取品牌深色 surface（AcgSurfaceDark #12131A），暗色模式冷启动不再闪亮色。 -->
+    <color name="launch_background">#12131A</color>
+</resources>

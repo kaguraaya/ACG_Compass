@@ -46,8 +46,17 @@ object TagClassifier {
         }
     }
 
-    /** 对单个标签分类（结合上下文交叉验证）。空白标签 → [TasteCategory.NOISE]。 */
-    fun classify(rawTag: String, context: Context = Context.EMPTY): TasteCategory {
+    /**
+     * 对单个标签分类（结合上下文交叉验证）。空白标签 → [TasteCategory.NOISE]。
+     *
+     * N3：[overrides]（清洗后标签 → 维度）为 AI 分维分类缓存，**仅**作用于本地规则「其余视为题材」兜底的
+     * 未知标签——已被词典 / 正则 / 交叉验证命中的标签不受影响。缓存为空（AI 未配置 / 未分类）时行为与之前完全一致。
+     */
+    fun classify(
+        rawTag: String,
+        context: Context = Context.EMPTY,
+        overrides: Map<String, TasteCategory> = emptyMap(),
+    ): TasteCategory {
         val t = clean(rawTag)
         if (t.length < MIN_LEN) return TasteCategory.NOISE
 
@@ -81,9 +90,30 @@ object TagClassifier {
         if (t in DEVICE_TAGS) return TasteCategory.DEVICE
         if (t in TasteTagTaxonomy.GENRE_TAGS) return TasteCategory.TOPIC
 
-        // 其余非内容元数据（媒介格式/放送状态/地区等）→ 噪声；否则按「其余视为题材」归 TOPIC。
+        // 其余非内容元数据（媒介格式/放送状态/地区等）→ 噪声。
         if (TasteTagTaxonomy.isMeta(rawTag)) return TasteCategory.NOISE
+        // N3：对「其余视为题材」兜底的未知标签，若 AI 分维缓存命中则用更精确维度；未命中仍归题材（与原行为一致）。
+        overrides[t]?.let { return it }
         return TasteCategory.TOPIC
+    }
+
+    /**
+     * N3：判断标签在**本地规则**下是否落入「其余视为题材」兜底——即未被时间 / 来源 / 厂牌 / 交叉验证 /
+     * 各词典（MEME/XP/DEVICE/GENRE）命中、也非 [TasteTagTaxonomy.isMeta] 噪声的未知标签。这些正是需要 AI
+     * 补充分维的候选；其余标签本地已能精确分类，无需（也不应）交给 AI。判定顺序与 [classify] 保持一致。
+     */
+    fun isUnknownTopicFallback(rawTag: String, context: Context = Context.EMPTY): Boolean {
+        val t = clean(rawTag)
+        if (t.length < MIN_LEN) return false
+        if (t in context.titleVariants) return false
+        if (TIME_REGEX.matches(t)) return false
+        if (SOURCE_REGEX.containsMatchIn(t)) return false
+        if (t in context.characterNames || t in context.cvNames || t in context.staffNames) return false
+        if (isStudioTag(t)) return false
+        if (t in MEME_TAGS || t in XP_TAGS || t in DEVICE_TAGS) return false
+        if (t in TasteTagTaxonomy.GENRE_TAGS) return false
+        if (TasteTagTaxonomy.isMeta(rawTag)) return false
+        return true
     }
 
     /** 标签清洗：下划线/连字符转空格、折叠空白、trim、小写（与 [TasteTagTaxonomy] 口径一致）。 */

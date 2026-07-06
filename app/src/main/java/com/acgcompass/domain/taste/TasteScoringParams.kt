@@ -61,6 +61,26 @@ object TasteScoringParams {
         else -> 0.0
     }
 
+    /** 评分中心化斜率（每偏离用户均分 1 分的偏好增量）。 */
+    const val PREF_SLOPE: Double = 0.35
+
+    /** 评分中心化偏好绝对值上限（对齐绝对 [pref] 的 10 分强度）。 */
+    const val PREF_MAX_ABS: Double = 1.25
+
+    /**
+     * 评分 → 偏好值（**用户均分中心化**版，RC.17）：以用户自己的平均分为中性点，
+     * `pref = clip((rating − userMean)·[PREF_SLOPE], ±[PREF_MAX_ABS])`。
+     *
+     * 根因（RC.17，真实数据 LOO 盲测 Spearman≈0）：绝对 [pref] 以 5.5 为中性点，对「均分偏高（如 7.0）」
+     * 的用户，6–7 分（其实是平庸片）仍记正偏好 → 用户**看得多但只给中等分**的题材（如某长番系列）
+     * 累积成强正向、主导画像，而**看得少却给高分**的挚爱题材被淹没 → 预测分与真实评分排序几乎不相关。
+     * 中心化后 6–7 分≈0 贡献，只有高于自己均分的作品才推正偏好、低于的推负偏好，画像回归「相对偏爱」。
+     */
+    fun prefCentered(rating: Int?, userMean: Double): Double {
+        if (rating == null) return 0.0
+        return ((rating - userMean) * PREF_SLOPE).coerceIn(-PREF_MAX_ABS, PREF_MAX_ABS)
+    }
+
     /**
      * 时间权重 `w_time = 0.3 + 0.7·2^(-Δdays/540)`，再对 10/9 分施加高分例外地板。
      * @param ageDays 该评分距「最近一条评分」的天数（< 0 视为 0）。
@@ -154,8 +174,14 @@ object TasteScoringParams {
     /** 拟合 isotonic 校准所需的最小显式评分样本数；不足时退化为温度化 logistic。 */
     const val ISOTONIC_MIN_SAMPLES: Int = 25
 
-    /** 温度化 logistic 的温度地板 `τ_u = max(0.18, std(z_train))`。 */
+    /** 温度化 logistic 的温度地板 `τ_u = max(0.18, std(z_train))`（冷启动 / logistic 兜底用）。 */
     const val LOGISTIC_TAU_FLOOR: Double = 0.18
+
+    /**
+     * 校准温度地板（RC.16）：候选池校准下 combo 已归一化，rawZ 落在 ~[-0.3, 1] 的小尺度，
+     * [LOGISTIC_TAU_FLOOR]=0.18 会过大而压平区分度；此地板仅防 `std→0` 退化，实际温度以候选池 std 为准。
+     */
+    const val CALIBRATION_TAU_FLOOR: Double = 0.05
 
     /** 分数拉开：基准分。 */
     const val SPREAD_BASE: Double = 50.0

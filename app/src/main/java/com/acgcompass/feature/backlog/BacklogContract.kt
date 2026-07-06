@@ -66,6 +66,7 @@ fun MediaType.label(): String = when (this) {
     MediaType.NOVEL -> "小说"
     MediaType.GAME -> "游戏"
     MediaType.VN -> "视觉小说"
+    MediaType.OTHER -> "其他"
 }
 
 /** 数据源来源标签（RC.01 3.8 / RC.05.02）。 */

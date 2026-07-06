@@ -229,6 +229,8 @@ private class FakeRouteNodeDao : RouteNodeDao {
 private class FakeRouteWorkDao : WorkDao {
     private val works = LinkedHashMap<String, WorkEntity>()
 
+    override suspend fun count(): Int = works.size
+
     fun put(id: String) {
         works[id] = WorkEntity(
             id = id,
@@ -262,6 +264,8 @@ private class FakeRouteWorkDao : WorkDao {
     override fun observeById(id: String): Flow<WorkEntity?> = MutableStateFlow(works[id])
     override fun observeByMediaType(mediaType: String): Flow<List<WorkEntity>> =
         MutableStateFlow(emptyList())
+    override suspend fun getIdsByMediaType(mediaType: String, limit: Int): List<String> =
+        works.values.filter { it.mediaType == mediaType }.take(limit).map { it.id }
     override fun search(query: String): Flow<List<WorkEntity>> = MutableStateFlow(emptyList())
     override suspend fun insert(work: WorkEntity) { works[work.id] = work }
     override suspend fun upsert(work: WorkEntity) { works[work.id] = work }

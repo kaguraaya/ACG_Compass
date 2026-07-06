@@ -15,6 +15,7 @@ import com.acgcompass.data.local.dao.RouteNodeDao
 import com.acgcompass.data.local.dao.SnapshotDao
 import com.acgcompass.data.local.dao.SourceLinkDao
 import com.acgcompass.data.local.dao.TagDao
+import com.acgcompass.data.local.dao.TagDimensionDao
 import com.acgcompass.data.local.dao.TasteDao
 import com.acgcompass.data.local.dao.UserCollectionDao
 import com.acgcompass.data.local.dao.WorkDao
@@ -32,6 +33,7 @@ import com.acgcompass.data.local.entity.RecommendationExposureEntity
 import com.acgcompass.data.local.entity.RouteNodeEntity
 import com.acgcompass.data.local.entity.SnapshotEntity
 import com.acgcompass.data.local.entity.SourceLinkEntity
+import com.acgcompass.data.local.entity.TagDimensionEntity
 import com.acgcompass.data.local.entity.TagEntity
 import com.acgcompass.data.local.entity.TasteProfileEntity
 import com.acgcompass.data.local.entity.TasteTagStatEntity
@@ -78,8 +80,9 @@ import com.acgcompass.data.local.entity.WorkTagEntity
         RankingCacheEntity::class,
         WorkFeatureEntity::class,
         RecommendationExposureEntity::class,
+        TagDimensionEntity::class,
     ],
-    version = 8,
+    version = 10,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -114,6 +117,8 @@ abstract class AcgCompassDatabase : RoomDatabase() {
     abstract fun workFeatureDao(): WorkFeatureDao
 
     abstract fun recommendationExposureDao(): RecommendationExposureDao
+
+    abstract fun tagDimensionDao(): TagDimensionDao
 
     companion object {
         /** Physical database file name. */

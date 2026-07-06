@@ -55,7 +55,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -191,10 +194,8 @@ fun DiscoverScreen(
             AcgTopLevelTopBar(
                 title = "发现",
                 actions = {
-                    // C 轮：探索队列入口（主动探索「可能喜欢但还没接触」的新作品）。
-                    androidx.compose.material3.TextButton(onClick = onOpenExploreQueue) {
-                        androidx.compose.material3.Text("探索")
-                    }
+                    // C：探索队列入口——指南针图标（与 Hoshimi App 图标 / 开屏一致的四芒星指针罗盘）。
+                    ExploreQueueCompassAction(onClick = onOpenExploreQueue)
                 },
             )
         },
@@ -254,6 +255,43 @@ fun DiscoverScreen(
                     onOpenWork = onOpenWork,
                 )
             }
+        }
+    }
+}
+
+/**
+ * C：发现页顶栏「探索队列」入口——自绘指南针图标（与 App 图标 / 开屏一致的四芒星指针 + 圆环
+ * 罗盘），点击进入主动探索队列。图标随主题着色（onSurface），与底部导航「发现」罗盘图标区分。
+ */
+@Composable
+private fun ExploreQueueCompassAction(onClick: () -> Unit) {
+    val tint = MaterialTheme.colorScheme.onSurface
+    IconButton(onClick = onClick) {
+        Canvas(
+            modifier = Modifier
+                .size(24.dp)
+                .semantics { contentDescription = "探索队列" },
+        ) {
+            val s = size.minDimension
+            val c = Offset(size.width / 2f, size.height / 2f)
+            // 罗盘圆环。
+            drawCircle(color = tint, radius = s * 0.44f, center = c, style = Stroke(width = s * 0.08f))
+            // 四芒星指针（南北长、东西短），指向感明确，尖端抵圆环。
+            val longR = s * 0.42f
+            val shortR = s * 0.17f
+            val d = s * 0.085f
+            val needle = Path().apply {
+                moveTo(c.x, c.y - longR)
+                lineTo(c.x + d, c.y - d)
+                lineTo(c.x + shortR, c.y)
+                lineTo(c.x + d, c.y + d)
+                lineTo(c.x, c.y + longR)
+                lineTo(c.x - d, c.y + d)
+                lineTo(c.x - shortR, c.y)
+                lineTo(c.x - d, c.y - d)
+                close()
+            }
+            drawPath(needle, color = tint)
         }
     }
 }
@@ -966,7 +1004,8 @@ private fun FilterSection(
                 ) {
                 // 类型（RC.05.06）
                 FilterGroup(title = "类型") {
-                    com.acgcompass.domain.model.MediaType.entries.forEach { type ->
+                    // L：隐藏 OTHER（音乐 / 三次元 / 未知），发现页为动画为主不提供“其他”类型筛选。
+                    com.acgcompass.domain.model.MediaType.entries.filter { it != com.acgcompass.domain.model.MediaType.OTHER }.forEach { type ->
                         ToggleChip(
                             label = type.filterLabel(),
                             selected = type in filter.types,
@@ -1244,6 +1283,7 @@ private fun com.acgcompass.domain.model.MediaType.filterLabel(): String = when (
     com.acgcompass.domain.model.MediaType.NOVEL -> "小说"
     com.acgcompass.domain.model.MediaType.GAME -> "游戏"
     com.acgcompass.domain.model.MediaType.VN -> "视觉小说"
+    com.acgcompass.domain.model.MediaType.OTHER -> "其他"
 }
 
 private fun com.acgcompass.domain.model.ReleaseStatus.filterLabel(): String = when (this) {

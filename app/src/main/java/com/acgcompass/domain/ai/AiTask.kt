@@ -135,4 +135,24 @@ sealed class AiTask<T>(
         // 都能正常展示；真正损坏的输出仍走低置信兜底（不编造）。
         requiredFields = listOf("matchScore"),
     )
+
+    /**
+     * N3 标签分维分类任务：把一批「本地规则兜底为题材」的未知社区标签交 AI 归入更精确的口味维度
+     * （见 [com.acgcompass.domain.taste.TasteCategory]）。结果缓存于 `tag_dimensions`，供画像构建 / 评分复用；
+     * AI 未配置或失败时调用方回退本地规则（不阻塞、不伪造，RC.14.01/03）。非作品维度任务，[workId] 为占位串。
+     *
+     * @property tags 本批待分类的原始标签清单（与 [userContent] 列出的顺序一致，供回写核对与缺项兜底）。
+     */
+    class TagClassify(
+        content: String,
+        val tags: List<String>,
+        dataSources: List<String> = emptyList(),
+    ) : AiTask<TagClassifyOutput>(
+        type = AiTaskType.TAG_CLASSIFY,
+        workId = GLOBAL_WORK_ID,
+        userContent = content,
+        dataSources = dataSources,
+        serializer = TagClassifyOutput.serializer(),
+        requiredFields = listOf("items"),
+    )
 }

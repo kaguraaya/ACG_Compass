@@ -115,6 +115,7 @@ fun rankedCardOf(
                 MediaType.NOVEL -> "小说"
                 MediaType.GAME -> "游戏"
                 MediaType.VN -> "视觉小说"
+                MediaType.OTHER -> "其他"
             },
             ratingText = ratingText,
             sourceTags = listOf("Bangumi"),
@@ -564,6 +565,7 @@ private fun MediaType.boardLabel(): String = when (this) {
     MediaType.NOVEL -> "小说"
     MediaType.GAME -> "游戏"
     MediaType.VN -> "视觉小说"
+    MediaType.OTHER -> "其他"
 }
 
 private fun CompletionCost.boardLabel(): String = when (this) {

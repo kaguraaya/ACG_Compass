@@ -1,6 +1,9 @@
 package com.acgcompass.domain.taste
 
 import javax.inject.Inject
+import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.sqrt
 
 /**
@@ -28,7 +31,12 @@ data class TasteSample(
  */
 class BuildTasteProfileUseCase @Inject constructor() {
 
-    operator fun invoke(samples: List<TasteSample>, now: Long): AdvancedTasteProfile {
+    operator fun invoke(
+        samples: List<TasteSample>,
+        now: Long,
+        calibrationPool: List<WorkFeature> = emptyList(),
+        tagOverrides: Map<String, TasteCategory> = emptyMap(),
+    ): AdvancedTasteProfile {
         val rated = samples.filter { it.rating != null }
         if (rated.isEmpty()) {
             return AdvancedTasteProfile(generatedAt = now)
@@ -36,6 +44,8 @@ class BuildTasteProfileUseCase @Inject constructor() {
 
         val selected = selectSamples(rated)
         val referenceTime = selected.maxOfOrNull { it.updatedAtMillis ?: 0L }?.takeIf { it > 0L } ?: now
+        // RC.17：评分偏好以用户均分为中性点（取全体已评分样本均分），修「看得多≠偏爱」导致的画像主导偏差。
+        val userMean = rated.mapNotNull { it.rating }.average()
 
         // 各大类 tag/name → 累加偏好值（正负混合，后续拆分）。
         val acc = HashMap<TasteCategory, HashMap<String, Double>>()
@@ -55,14 +65,19 @@ class BuildTasteProfileUseCase @Inject constructor() {
         var commentCovered = 0
         var timeCovered = 0
 
+        // 校准去偏（RC.15）：留存每样本的「特征化 + 有符号贡献」，供 calibrate 做**留一式** raw z，
+        // 消除「训练样本自身贡献画像 U_c^+ → 其 z 被抬高 → μ 偏高 → 未评分作品普遍塌到十几分」的样本内偏置。
+        val perSample = ArrayList<CalibSample>(selected.size)
+
         for (s in selected) {
             val rating = s.rating ?: continue
-            val pref = TasteScoringParams.pref(rating)
+            val pref = TasteScoringParams.prefCentered(rating, userMean)
             val ageDays = ageDaysOf(referenceTime, s.updatedAtMillis)
             val w = TasteScoringParams.sampleWeight(ageDays, rating, s.comment)
             val contribution = w * pref
 
-            val f = TasteRawScorer.featurize(s.feature)
+            val f = TasteRawScorer.featurize(s.feature, tagOverrides)
+            perSample += CalibSample(s.feature, f, contribution)
             if (f.byCategory.isNotEmpty()) tagCovered++
             if (s.feature.staff.isNotEmpty()) staffCovered++
             if (!s.comment.isNullOrBlank()) commentCovered++
@@ -99,7 +114,7 @@ class BuildTasteProfileUseCase @Inject constructor() {
         }.sortedByDescending { it.strength }
 
         val coreProfile = AdvancedTasteProfile(categories = categories, combos = combos)
-        val calibration = calibrate(selected, coreProfile)
+        val calibration = calibrate(perSample, acc, categories, coreProfile, calibrationPool, tagOverrides)
 
         val n = selected.size
         val coverage = TasteCoverage(
@@ -161,21 +176,92 @@ class BuildTasteProfileUseCase @Inject constructor() {
         return out
     }
 
-    /** 温度化 logistic 校准：`μ=median(z_train)`、`τ=max(0.18, std(z_train))`。 */
-    private fun calibrate(samples: List<TasteSample>, core: AdvancedTasteProfile): TasteCalibration {
-        val zs = samples.map { TasteRawScorer.rawScore(it.feature, core) }
-        if (zs.isEmpty()) return TasteCalibration()
-        val mu = median(zs)
+    /** 单样本校准输入：特征化结果 + 该样本对画像的**有符号贡献** `w·pref`（留一去偏用）。 */
+    private data class CalibSample(
+        val feature: WorkFeature,
+        val featurized: TasteRawScorer.Featurized,
+        val contribution: Double,
+    )
+
+    /**
+     * 温度化 logistic 校准（RC.16 **候选池校准**版）：`μ=median(z_pool)`、`τ=max(0.05, std(z_pool))`。
+     *
+     * 根因（RC.16）：`simCombo` 归一化后已消除「combo 项爆炸主导 rawZ」，但若仍用训练样本 z 定中心，
+     * 训练样本因自身贡献画像（自我重合）rawZ 系统性高于外部作品，μ 偏高 → 未评分作品仍普遍偏低。
+     * 改用**未评分候选池**（用户会去搜索 / 浏览的外部作品全体，取自 `work_features` 缓存）的 rawZ 分布
+     * 定 μ/τ：池中位即「典型未评分作品」的中心，据此校准后未评分作品自然落在 50 分附近、按契合度拉开
+     * （完美命中→90+、部分契合→中段、中性→50 下、反口味→低分）。已评分作品另走显式评分锚定，不受影响。
+     * 池不足 [CALIB_MIN_POOL] 时回退训练样本留一 z（小数据兜底，无更好参照）。
+     */
+    private fun calibrate(
+        perSample: List<CalibSample>,
+        acc: Map<TasteCategory, Map<String, Double>>,
+        baseCategories: Map<TasteCategory, CategoryPreference>,
+        core: AdvancedTasteProfile,
+        pool: List<WorkFeature>,
+        tagOverrides: Map<String, TasteCategory> = emptyMap(),
+    ): TasteCalibration {
+        val poolZs = if (pool.size >= CALIB_MIN_POOL) {
+            pool.mapNotNull { f -> runCatching { TasteRawScorer.rawScore(f, core, tagOverrides) }.getOrNull() }
+        } else {
+            emptyList()
+        }
+        val usePool = poolZs.size >= CALIB_MIN_POOL
+        val zs = when {
+            usePool -> poolZs
+            perSample.isNotEmpty() -> perSample.map { cs ->
+                TasteRawScorer.rawScore(cs.featurized, cs.feature, leaveOneOutProfile(cs, acc, baseCategories, core))
+            }
+            else -> return TasteCalibration()
+        }
+        // 池校准（RC.16）以未评分候选池中位为 μ；池不足回退训练样本 LOO z 时改用低分位数：已评分作品是
+        // 用户「选择看过并评分」的幸存者，其 rawZ 分布系统性高于随机未评分作品，用 median 会令 μ 偏高
+        // → 未评分作品普遍塌到十几分（用户实测症状）。取低分位近似未评分中心，缓解池不足时的整体压低。
+        val mu = quantile(zs, if (usePool) 0.5 else CALIB_FALLBACK_MU_QUANTILE)
         val mean = zs.average()
         val variance = if (zs.size > 1) zs.sumOf { (it - mean) * (it - mean) } / (zs.size - 1) else 0.0
-        val tau = maxOf(TasteScoringParams.LOGISTIC_TAU_FLOOR, sqrt(variance))
+        val tau = maxOf(TasteScoringParams.CALIBRATION_TAU_FLOOR, sqrt(variance))
         return TasteCalibration(mu = mu, tau = tau, isotonicPoints = null)
     }
 
-    private fun median(values: List<Double>): Double {
+    /**
+     * 构造「扣除样本 [cs] 自身贡献」的留一画像：仅重算 [cs] 命中的单标签维度（其余维度沿用全局）。
+     * 题材组合因需 ≥2 正向作品支撑、单样本影响小，近似沿用全局 combos；社区口碑项不依赖画像，无需去偏。
+     */
+    private fun leaveOneOutProfile(
+        cs: CalibSample,
+        acc: Map<TasteCategory, Map<String, Double>>,
+        baseCategories: Map<TasteCategory, CategoryPreference>,
+        core: AdvancedTasteProfile,
+    ): AdvancedTasteProfile {
+        if (cs.contribution == 0.0) return core
+        val overridden = HashMap(baseCategories)
+        for ((cat, tagMap) in cs.featurized.byCategory) {
+            val accCat = acc[cat] ?: continue
+            val looAccCat = HashMap(accCat)
+            for ((k, q) in tagMap) {
+                val newVal = (looAccCat[k] ?: 0.0) - cs.contribution * q
+                if (abs(newVal) < 1e-12) looAccCat.remove(k) else looAccCat[k] = newVal
+            }
+            val pref = toCategoryPreference(looAccCat)
+            if (pref.isEmpty) overridden.remove(cat) else overridden[cat] = pref
+        }
+        return core.copy(categories = overridden)
+    }
+
+    private fun median(values: List<Double>): Double = quantile(values, 0.5)
+
+    /** 线性插值分位数（q∈[0,1]）；空表返回 0，单元素返回该值。 */
+    private fun quantile(values: List<Double>, q: Double): Double {
+        if (values.isEmpty()) return 0.0
         val sorted = values.sorted()
-        val mid = sorted.size / 2
-        return if (sorted.size % 2 == 1) sorted[mid] else (sorted[mid - 1] + sorted[mid]) / 2.0
+        if (sorted.size == 1) return sorted[0]
+        val pos = q.coerceIn(0.0, 1.0) * (sorted.size - 1)
+        val lo = floor(pos).toInt()
+        val hi = ceil(pos).toInt()
+        if (lo == hi) return sorted[lo]
+        val frac = pos - lo
+        return sorted[lo] * (1 - frac) + sorted[hi] * frac
     }
 
     private fun ageDaysOf(referenceTime: Long, updatedAt: Long?): Double {
@@ -186,5 +272,11 @@ class BuildTasteProfileUseCase @Inject constructor() {
 
     private companion object {
         const val MILLIS_PER_DAY: Double = 24.0 * 3600 * 1000
+
+        /** 候选池校准最小样本数：池 ≥ 此值才用其 rawZ 分布定 μ/τ，否则回退训练样本留一 z。 */
+        const val CALIB_MIN_POOL: Int = 20
+
+        /** 池不足回退时 μ 取已评分 LOO z 的低分位数（补偿幸存者偏差：未评分作品 rawZ 中心低于已评分作品）。 */
+        const val CALIB_FALLBACK_MU_QUANTILE: Double = 0.4
     }
 }

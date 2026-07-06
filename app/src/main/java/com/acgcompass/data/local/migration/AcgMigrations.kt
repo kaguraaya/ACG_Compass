@@ -166,6 +166,35 @@ object AcgMigrations {
     }
 
     /**
+     * v8 -> v9（M）：user_collections 表新增非空 `isPrivate`（是否「仅自己可见 / 私密」，Bangumi `private`）。
+     * 仅 `ALTER TABLE ADD COLUMN` 且带 `NOT NULL DEFAULT 0`，既有行默认置公开（0），**不丢任何用户数据**；
+     * 与 [com.acgcompass.data.local.entity.UserCollectionEntity] 生成的期望 schema 一致（INTEGER NOT NULL、默认 0），
+     * 以通过 Room 运行时校验与迁移测试。
+     */
+    private val MIGRATION_8_9 = Migration(8, 9) { db ->
+        db.execSQL("ALTER TABLE `user_collections` ADD COLUMN `isPrivate` INTEGER NOT NULL DEFAULT 0")
+    }
+
+    /**
+     * v9 -> v10（N3）：新增 `tag_dimensions` 缓存表（社区标签 → 口味维度的 AI 分维分类结果）。
+     * 仅 `CREATE TABLE`，纯新增、不触碰既有表，**不丢任何用户数据**；列与顺序须与
+     * [com.acgcompass.data.local.entity.TagDimensionEntity] 生成的期望 schema 完全一致
+     * （tag TEXT PK、dimension/source TEXT NOT NULL、confidence REAL NOT NULL、updatedAt INTEGER NOT NULL），
+     * 以通过 Room 运行时校验与迁移测试。
+     */
+    private val MIGRATION_9_10 = Migration(9, 10) { db ->
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `tag_dimensions` (" +
+                "`tag` TEXT NOT NULL, " +
+                "`dimension` TEXT NOT NULL, " +
+                "`source` TEXT NOT NULL, " +
+                "`confidence` REAL NOT NULL, " +
+                "`updatedAt` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`tag`))",
+        )
+    }
+
+    /**
      * All registered migrations, ordered ascending by `startVersion`.
      *
      * Spread into the Room builder with `.addMigrations(*AcgMigrations.ALL)`.
@@ -178,5 +207,7 @@ object AcgMigrations {
         MIGRATION_5_6,
         MIGRATION_6_7,
         MIGRATION_7_8,
+        MIGRATION_8_9,
+        MIGRATION_9_10,
     )
 }

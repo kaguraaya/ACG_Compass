@@ -116,8 +116,10 @@ class DatabasePreMigrationBackup @Inject constructor(
         /**
          * The current schema version, mirroring `@Database(version = …)` on [AcgCompassDatabase].
          * Bump this in lockstep with the database version when adding a migration to [AcgMigrations].
+         * NOTE: must equal `AcgCompassDatabase` `@Database(version)`; `DatabasePreMigrationBackupTest`
+         * guards this against drift (previously stuck at 1 → upgrade backup net silently disabled).
          */
-        const val CURRENT_DB_VERSION: Int = 1
+        const val CURRENT_DB_VERSION: Int = 10
     }
 }
 

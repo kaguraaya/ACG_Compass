@@ -74,6 +74,33 @@ data class OnboardingUiState(
 }
 
 /**
+ * H：首启引导中「快速配置（可选）」的用户输入草稿——直接在引导页填写主要设置项，完成时一次性
+ * 交由 [OnboardingViewModel] 加密保存（Bangumi 个人 Token + AI 增强）。全部可留空跳过，稍后仍可在
+ * 「设置」补填。敏感值仅经 `CredentialStore` 加密落盘，绝不写入 DataStore / 日志（RC.00 1.2）。
+ *
+ * @property consentToProxyToken 是否同意个人 Token 经社区反代中转（N6）。
+ * @property bangumiToken Bangumi 个人 Access Token（可选）。
+ * @property aiApiKey AI 服务 API Key（可选；为空则不配置 AI）。
+ * @property aiBaseUrl AI OpenAI 兼容端点（默认 DeepSeek，可编辑）。
+ * @property aiModel AI 模型名（默认 deepseek-chat，可编辑）。
+ */
+data class OnboardingSetup(
+    val consentToProxyToken: Boolean = false,
+    val bangumiToken: String = "",
+    val aiApiKey: String = "",
+    val aiBaseUrl: String = OnboardingDefaults.AI_BASE_URL,
+    val aiModel: String = OnboardingDefaults.AI_MODEL,
+)
+
+/** H：引导页快速配置的默认建议值（推荐 DeepSeek —— 国内可直连的 OpenAI 兼容服务，可编辑）。 */
+object OnboardingDefaults {
+    const val AI_BASE_URL: String = "https://api.deepseek.com/v1"
+    const val AI_MODEL: String = "deepseek-chat"
+    /** Bangumi Access Token 生成页（引导页文案引用，用户自行前往）。 */
+    const val BANGUMI_TOKEN_HELP_URL: String = "https://next.bgm.tv/demo/access-token"
+}
+
+/**
  * 根据「引导是否已展示」的持久化标志，判断是否需要展示首启引导（RC.03.01）。
  *
  * 纯函数，便于单元测试：仅当 [onboardingShown] 为 `false`（即从未展示过）时返回 `true`。

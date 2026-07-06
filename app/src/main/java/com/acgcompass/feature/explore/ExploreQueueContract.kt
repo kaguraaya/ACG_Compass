@@ -11,7 +11,7 @@ import com.acgcompass.domain.taste.TasteMatchResult
  *
  * 主动探索「你可能喜欢、但还没接触」的作品：候选 = 本地 + 公共池动画 − 已收藏 − 待补池 − 近期曝光；
  * **口味匹配度（12 维引擎）为核心**排序与展示，社区评分仅参考（见详情页，刻意弱化以突出个性化）。
- * 左滑加入待补池、右滑暂不感兴趣（记曝光冷却，短期不再重复推荐，RC.06/RC.08/RC.10）。
+ * 右滑加入待补池、左滑暂不感兴趣（记曝光冷却，短期不再重复推荐，RC.06/RC.08/RC.10）。
  */
 sealed interface ExploreQueueUiState {
     /** 生成中（首屏 / 再来一批）。 */
@@ -41,6 +41,8 @@ data class ExploreCardUiModel(
     val tasteQualitative: String,
     val reason: String,
     val tags: List<String>,
+    /** D：作品简介（主源 `summary`，卡片单击翻面展示）；缺失为 `null`，翻面显示「暂无简介」不伪造。 */
+    val synopsis: String?,
 )
 
 /**
@@ -81,6 +83,7 @@ internal fun Work.toExploreCard(match: TasteMatchResult?): ExploreCardUiModel {
         },
         reason = reason,
         tags = tags.take(5).map { it.name },
+        synopsis = summary?.trim()?.takeIf { it.isNotBlank() },
     )
 }
 

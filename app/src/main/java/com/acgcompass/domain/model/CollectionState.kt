@@ -8,6 +8,7 @@ package com.acgcompass.domain.model
  * - [rating]：个人评分（如 Bangumi 1–10 整数）。缺失为 `null`，绝不伪造（RC.17.4）。
  * - [shortReview]：个人短评文本。缺失为 `null`。
  * - [progress]：进度（已看集数 / 已读话数）。缺失为 `null`。
+ * - [isPrivate]：该条收藏是否「仅自己可见 / 私密」（Bangumi `private`）。默认公开（`false`）。
  *
  * 纯领域模型（无 Android 依赖），供纯函数 [com.acgcompass.domain.usecase.SnapshotDiff] 计算差异。
  */
@@ -17,6 +18,7 @@ data class CollectionState(
     val rating: Int? = null,
     val shortReview: String? = null,
     val progress: Int? = null,
+    val isPrivate: Boolean = false,
 )
 
 /**

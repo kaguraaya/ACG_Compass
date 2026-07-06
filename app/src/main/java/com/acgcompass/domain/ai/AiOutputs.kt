@@ -133,6 +133,34 @@ data class RouteNodeOutput(
 )
 
 /**
+ * N3 标签分维分类输出：把一批社区标签各归入一个口味维度（[com.acgcompass.domain.taste.TasteCategory] 的 `key`）。
+ *
+ * 仅对本地规则「其余视为题材」兜底的**未知标签**做补充分类，把它们从笼统的 `topic` 细化到 `device`/`xp`/
+ * `meme`/`source`/`time`/`noise` 等更精确维度；已被本地词典 / 交叉验证命中的标签不受影响（AI 不可用时全回退本地）。
+ *
+ * @property items       每个输入标签 → 维度 key 的分类结果。
+ * @property confidence  整体置信度 0–1（模型无法判断时给低值，不编造）。
+ */
+@Serializable
+data class TagClassifyOutput(
+    val items: List<TagDimensionAssignment> = emptyList(),
+    val confidence: Float = 0f,
+)
+
+/**
+ * 单条标签分维结果（[TagClassifyOutput] 的元素）。
+ *
+ * @property tag       原始标签（清洗前，回写时以清洗后小写为缓存键）。
+ * @property dimension 维度 key，取值见 [com.acgcompass.domain.taste.TasteCategory] 的 `key`
+ *                     （topic/device/xp/character/staff/cv/source/time/meme/noise）。
+ */
+@Serializable
+data class TagDimensionAssignment(
+    val tag: String = "",
+    val dimension: String = "",
+)
+
+/**
  * 路线节点观看建议（RC.12.02）：必看 / 可选 / 可跳过 / 总集篇回顾。
  */
 enum class RouteRecommendation {

@@ -58,7 +58,9 @@ class AggregateRatingsUseCaseTest : StringSpec({
 
         val consensus = useCase(input).consensus
         consensus.shouldNotBeNull()
-        consensus.stability shouldBeGreaterThan 0.9f
+        // F8 三因子稳定度（一致性 0.40 + 评分人数 0.35 + 来源数 0.25）下，双源理论上限约 0.875；
+        // 本例两源高度一致（极差 0.1）、票数充足 → 约 0.795，属「较高稳定度」。
+        consensus.stability shouldBeGreaterThan 0.75f
         consensus.controversy shouldBeLessThan 0.1f
         consensus.priority shouldBeGreaterThan 0.5f
     }

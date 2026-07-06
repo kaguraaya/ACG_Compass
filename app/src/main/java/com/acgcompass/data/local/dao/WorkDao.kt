@@ -43,6 +43,13 @@ interface WorkDao {
     @Query("SELECT * FROM works WHERE mediaType = :mediaType ORDER BY updatedAt DESC")
     fun observeByMediaType(mediaType: String): Flow<List<WorkEntity>>
 
+    /**
+     * G Step2：取指定类型作品 id（按最近入池优先，仅 id 轻量查询），供口味校准候选池冷启动补齐
+     * `work_features`。发现池（works 表）常有数百~上千条，据此挑未评分未缓存者 best-effort 联网补特征。
+     */
+    @Query("SELECT id FROM works WHERE mediaType = :mediaType ORDER BY updatedAt DESC LIMIT :limit")
+    suspend fun getIdsByMediaType(mediaType: String, limit: Int): List<String>
+
     @Query(
         "SELECT * FROM works WHERE canonicalTitle LIKE '%' || :query || '%' " +
             "OR titleJa LIKE '%' || :query || '%' " +

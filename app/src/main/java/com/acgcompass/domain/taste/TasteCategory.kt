@@ -76,6 +76,17 @@ enum class TasteCategory(val key: String, val defaultWeight: Float) {
         val SINGLE_TAG_CATEGORIES: List<TasteCategory> =
             listOf(TOPIC, DEVICE, XP, CHARACTER, STAFF, CV, SOURCE, TIME, MEME, NOISE)
 
+        /**
+         * N3：由维度 [key]（AI 分维分类输出 / 缓存持久化值）解析大类；未知 / `null` 返回 `null`
+         * （调用方回退本地规则，不编造，RC.17.4）。仅接受可由单标签产出的维度（[SINGLE_TAG_CATEGORIES]），
+         * 拒绝 COMBO/COMMENT/COMMUNITY 等派生维度，避免 AI 误把单标签塞进这些非单标签维度。
+         */
+        fun fromKey(key: String?): TasteCategory? {
+            val k = key?.trim()?.lowercase().orEmpty()
+            if (k.isEmpty()) return null
+            return SINGLE_TAG_CATEGORIES.firstOrNull { it.key == k }
+        }
+
         /** 参与「题材组合挖掘」的来源大类（文档：只对题材单标签 + 情节装置做组合）。 */
         val COMBO_SOURCE_CATEGORIES: List<TasteCategory> = listOf(TOPIC, DEVICE)
     }

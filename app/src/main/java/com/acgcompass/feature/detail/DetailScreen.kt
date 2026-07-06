@@ -30,6 +30,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -122,7 +123,7 @@ fun DetailScreen(
     onAddMainline: () -> Unit = {},
     onAddAllSeries: () -> Unit = {},
     onAnalyzeMatchWithAi: () -> Unit = {},
-    onUpdateMyRecord: (String?, Int?, Int?, String?, List<String>?) -> Unit = { _, _, _, _, _ -> },
+    onUpdateMyRecord: (String?, Int?, Int?, String?, List<String>?, Boolean) -> Unit = { _, _, _, _, _, _ -> },
 ) {
     Column(
         modifier = modifier
@@ -451,7 +452,7 @@ private fun PersonalSection(
     onToggleBacklog: () -> Unit,
     modifier: Modifier = Modifier,
     recordMessage: String? = null,
-    onUpdateMyRecord: (String?, Int?, Int?, String?, List<String>?) -> Unit = { _, _, _, _, _ -> },
+    onUpdateMyRecord: (String?, Int?, Int?, String?, List<String>?, Boolean) -> Unit = { _, _, _, _, _, _ -> },
 ) {
     var showEdit by remember { mutableStateOf(false) }
     SectionCard(title = "我的记录", modifier = modifier) {
@@ -477,6 +478,8 @@ private fun PersonalSection(
                     )
                     ChipFlowRow(items = personal.tags)
                 }
+                // M：记录可见性——私密时明确标注「仅自己可见」，否则「公开」。
+                PersonalRow(label = "可见性", value = if (personal.isPrivate) "仅自己可见（私密）" else "公开")
                 // G8/G9/G13：编辑我的记录（状态/评分/进度/短评）并回写 Bangumi。
                 OutlinedButton(onClick = { showEdit = true }, modifier = Modifier.fillMaxWidth()) {
                     Text(text = "编辑我的记录")
@@ -518,8 +521,8 @@ private fun PersonalSection(
         EditMyRecordDialog(
             personal = personal,
             onDismiss = { showEdit = false },
-            onSave = { status, rating, progress, comment, tags ->
-                onUpdateMyRecord(status, rating, progress, comment, tags)
+            onSave = { status, rating, progress, comment, tags, private ->
+                onUpdateMyRecord(status, rating, progress, comment, tags, private)
                 showEdit = false
             },
         )
@@ -535,7 +538,7 @@ private fun PersonalSection(
 private fun EditMyRecordDialog(
     personal: PersonalUiModel,
     onDismiss: () -> Unit,
-    onSave: (String?, Int?, Int?, String?, List<String>?) -> Unit,
+    onSave: (String?, Int?, Int?, String?, List<String>?, Boolean) -> Unit,
 ) {
     val statuses = listOf("想看", "在看", "看过", "搁置", "抛弃")
     val initRating: String = personal.ratingText?.takeWhile { it.isDigit() } ?: ""
@@ -545,6 +548,8 @@ private fun EditMyRecordDialog(
     var progressText: String by remember { mutableStateOf(initProgress) }
     var comment: String by remember { mutableStateOf(personal.reviewText ?: "") }
     var tagsText: String by remember { mutableStateOf(personal.tags.joinToString(" ")) }
+    // M：可见性（仅自己可见 / 私密）——回显当前状态，避免保存时误将私密记录改回公开。
+    var isPrivate: Boolean by remember { mutableStateOf(personal.isPrivate) }
 
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
@@ -605,6 +610,22 @@ private fun EditMyRecordDialog(
                     label = { Text("标签（空格分隔）") },
                     modifier = Modifier.fillMaxWidth(),
                 )
+                // M：仅自己可见（私密）开关——开启后本条评分 / 短评 / 标签在 Bangumi 不公开展示。
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("仅自己可见（私密）", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "开启后，本条评分 / 短评 / 标签在 Bangumi 个人主页不公开展示",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = isPrivate, onCheckedChange = { isPrivate = it })
+                }
             }
         },
         confirmButton = {
@@ -614,7 +635,7 @@ private fun EditMyRecordDialog(
                 val commentArg: String? = if (comment.isBlank()) null else comment
                 val tagsArg: List<String>? = tagsText.split(Regex("[\\s,，、]+"))
                     .map { it.trim() }.filter { it.isNotEmpty() }.takeIf { it.isNotEmpty() }
-                onSave(status, rating, progress, commentArg, tagsArg)
+                onSave(status, rating, progress, commentArg, tagsArg, isPrivate)
             }) { Text("保存并同步") }
         },
         dismissButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("取消") } },
