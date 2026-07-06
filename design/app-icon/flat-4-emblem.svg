@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <!-- 扁平 4「星徽」：描边圆环 + 居中金色四芒星。徽章式、克制耐看 -->
+  <rect x="0" y="0" width="108" height="108" rx="24" fill="#1F2A44"/>
+  <circle cx="54" cy="54" r="29" fill="none" stroke="#F4F8FF" stroke-width="3.2"/>
+  <path d="M54,39 L57.5,50.5 L69,54 L57.5,57.5 L54,69 L50.5,57.5 L39,54 L50.5,50.5 Z" fill="#FFC24D"/>
+</svg>

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <!-- 扁平 2「罗盘针」：加粗分色指针（北金南白）微倾，仿导航箭头。纯平涂、动感、指向明确 -->
+  <rect x="0" y="0" width="108" height="108" rx="24" fill="#1F2A44"/>
+  <g transform="rotate(-18 54 54)">
+    <polygon points="54,27 64,54 44,54" fill="#F5B942"/>
+    <polygon points="54,81 64,54 44,54" fill="#F4F8FF"/>
+    <circle cx="54" cy="54" r="3" fill="#1F2A44"/>
+  </g>
+</svg>

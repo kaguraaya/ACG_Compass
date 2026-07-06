@@ -1,6 +1,10 @@
 package com.acgcompass.feature.onboarding
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,12 +20,19 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -34,12 +45,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.compose.foundation.clickable
-import androidx.compose.material3.Checkbox
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import com.acgcompass.core.designsystem.AcgCompassTheme
 
 /**
@@ -67,9 +72,17 @@ fun OnboardingRoute(
 }
 
 /**
- * 无状态引导界面（Material 3）。展示合规与隐私说明，底部提供主操作按钮。
+ * 无状态引导界面（Material 3）——多步向导（D）。
  *
- * 设计为无状态以便预览与 UI 测试：所有内容来自 [state]，交互通过 [onConfirm] 上抛。
+ * 将原单页长表单拆为 4 步，降低首启认知负担：
+ * 1. 介绍：合规 / 隐私 / 多源等要点（[OnboardingUiState.highlights]）。
+ * 2. 代理 API 同意：社区反代说明 + 个人 Token 中转同意（可不勾选，仅公共搜索经反代）。
+ * 3. Bangumi 个人同步（可选）：粘贴 Access Token。
+ * 4. AI 增强（可选）：OpenAI 兼容 API Key / Base URL / 模型名。
+ *
+ * 顶部进度点指示当前步；底部「上一步 / 下一步」，末步为主操作（[OnboardingUiState.confirmLabel]）；
+ * 后两步为可选项，顶部「跳过」直接以当前草稿完成。草稿仅在内存，完成时一次性上抛加密保存（空值不写）。
+ * 设计为无状态以便预览与 UI 测试：内容来自 [state]，完成通过 [onConfirm] 上抛 [OnboardingSetup]。
  */
 @Composable
 fun OnboardingScreen(
@@ -77,89 +90,109 @@ fun OnboardingScreen(
     onConfirm: (OnboardingSetup) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var consented by remember { mutableStateOf(false) }
     // H：快速配置（可选）草稿——仅内存，随「开始使用」一次性上抛加密保存（空值不写）。
+    var consented by remember { mutableStateOf(false) }
     var bangumiToken by remember { mutableStateOf("") }
     var aiApiKey by remember { mutableStateOf("") }
     var aiBaseUrl by remember { mutableStateOf(OnboardingDefaults.AI_BASE_URL) }
     var aiModel by remember { mutableStateOf(OnboardingDefaults.AI_MODEL) }
     var revealSecrets by remember { mutableStateOf(false) }
+    var step by remember { mutableStateOf(0) }
+
+    fun complete() = onConfirm(
+        OnboardingSetup(
+            consentToProxyToken = consented,
+            bangumiToken = bangumiToken,
+            aiApiKey = aiApiKey,
+            aiBaseUrl = aiBaseUrl,
+            aiModel = aiModel,
+        ),
+    )
+
     Scaffold(modifier = modifier.fillMaxSize()) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 24.dp)
-                .verticalScroll(rememberScrollState()),
+                .padding(horizontal = 24.dp),
             horizontalAlignment = Alignment.Start,
         ) {
-            Spacer(Modifier.height(48.dp))
-            Text(
-                text = state.title,
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = state.subtitle,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            Spacer(Modifier.height(32.dp))
-            state.highlights.forEachIndexed { index, highlight ->
-                HighlightCard(index = index + 1, highlight = highlight)
-                Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(16.dp))
+            // 顶部：进度点 +（可选步）跳过。
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                StepDots(
+                    current = step,
+                    total = ONBOARDING_PAGE_COUNT,
+                    modifier = Modifier.weight(1f),
+                )
+                if (step >= FIRST_OPTIONAL_PAGE) {
+                    TextButton(onClick = { complete() }) { Text("跳过") }
+                }
             }
 
-            // H：快速配置（可选）——直接在引导页填写主要设置项（Bangumi 个人 Token + AI 增强）。
-            QuickSetupSection(
-                bangumiToken = bangumiToken,
-                onBangumiTokenChange = { bangumiToken = it },
-                aiApiKey = aiApiKey,
-                onAiApiKeyChange = { aiApiKey = it },
-                aiBaseUrl = aiBaseUrl,
-                onAiBaseUrlChange = { aiBaseUrl = it },
-                aiModel = aiModel,
-                onAiModelChange = { aiModel = it },
-                revealSecrets = revealSecrets,
-                onToggleReveal = { revealSecrets = !revealSecrets },
-            )
+            Crossfade(
+                targetState = step,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+            ) { page ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    when (page) {
+                        0 -> IntroPage(state)
+                        1 -> ConsentPage(
+                            consentPrompt = state.consentPrompt,
+                            consented = consented,
+                            onConsentedChange = { consented = it },
+                        )
+                        2 -> BangumiPage(
+                            bangumiToken = bangumiToken,
+                            onBangumiTokenChange = { bangumiToken = it },
+                            revealSecrets = revealSecrets,
+                            onToggleReveal = { revealSecrets = !revealSecrets },
+                        )
+                        else -> AiPage(
+                            aiApiKey = aiApiKey,
+                            onAiApiKeyChange = { aiApiKey = it },
+                            aiBaseUrl = aiBaseUrl,
+                            onAiBaseUrlChange = { aiBaseUrl = it },
+                            aiModel = aiModel,
+                            onAiModelChange = { aiModel = it },
+                            revealSecrets = revealSecrets,
+                            onToggleReveal = { revealSecrets = !revealSecrets },
+                        )
+                    }
+                }
+            }
 
-            Spacer(Modifier.height(8.dp))
+            // 底部导航：上一步 | 下一步 / 开始使用。
+            val isLast = step == ONBOARDING_PAGE_COUNT - 1
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { consented = !consented }
-                    .padding(vertical = 4.dp),
-                verticalAlignment = Alignment.Top,
+                    .padding(vertical = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Checkbox(checked = consented, onCheckedChange = { consented = it })
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = state.consentPrompt,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                if (step > 0) {
+                    OutlinedButton(
+                        onClick = { if (step > 0) step-- },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("上一步") }
+                }
+                Button(
+                    onClick = { if (isLast) complete() else step++ },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(if (isLast) state.confirmLabel else "下一步")
+                }
             }
-            Spacer(Modifier.height(16.dp))
-            Button(
-                onClick = {
-                    onConfirm(
-                        OnboardingSetup(
-                            consentToProxyToken = consented,
-                            bangumiToken = bangumiToken,
-                            aiApiKey = aiApiKey,
-                            aiBaseUrl = aiBaseUrl,
-                            aiModel = aiModel,
-                        ),
-                    )
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(text = state.confirmLabel)
-            }
-            Spacer(Modifier.height(24.dp))
         }
     }
 }
@@ -220,14 +253,148 @@ private fun HighlightCard(
     }
 }
 
-/**
- * H：首启引导「快速配置（可选）」——把设置主要项（Bangumi 个人 Token + AI 增强）搬进引导页直接填写。
- * 均可留空跳过；敏感值经宆口 [OnboardingSetup] 上抛，由 ViewModel 加密保存到 `CredentialStore`（RC.00 1.2）。
- */
+/** 顶部步骤进度指示：当前步用主色加长条，其余为浅色圆点。 */
 @Composable
-private fun QuickSetupSection(
+private fun StepDots(
+    current: Int,
+    total: Int,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.semantics { contentDescription = "第 ${current + 1} / $total 步" },
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        repeat(total) { index ->
+            val active = index == current
+            Box(
+                modifier = Modifier
+                    .height(8.dp)
+                    .width(if (active) 24.dp else 8.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (active) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                    ),
+            )
+        }
+    }
+}
+
+/** 第 1 步：介绍——欢迎标题 + 合规 / 隐私 / 多源等要点卡片。 */
+@Composable
+private fun IntroPage(state: OnboardingUiState) {
+    Spacer(Modifier.height(16.dp))
+    Text(
+        text = state.title,
+        style = MaterialTheme.typography.headlineMedium,
+        fontWeight = FontWeight.Bold,
+    )
+    Spacer(Modifier.height(8.dp))
+    Text(
+        text = state.subtitle,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(24.dp))
+    state.highlights.forEachIndexed { index, highlight ->
+        HighlightCard(index = index + 1, highlight = highlight)
+        Spacer(Modifier.height(12.dp))
+    }
+    Spacer(Modifier.height(8.dp))
+}
+
+/** 第 2 步：代理 API 同意——社区反代说明 + 个人 Token 中转同意（可不勾选）。 */
+@Composable
+private fun ConsentPage(
+    consentPrompt: String,
+    consented: Boolean,
+    onConsentedChange: (Boolean) -> Unit,
+) {
+    Spacer(Modifier.height(16.dp))
+    Text(
+        text = "数据源与网络",
+        style = MaterialTheme.typography.headlineSmall,
+        fontWeight = FontWeight.Bold,
+    )
+    Spacer(Modifier.height(8.dp))
+    Text(
+        text = "默认使用社区反代地址访问 Bangumi——官方地址在部分网络需特殊环境，反代通常可直连。" +
+            "可随时在「设置 → 数据源」切回官方或更换地址。",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(20.dp))
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onConsentedChange(!consented) }
+                .padding(16.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Checkbox(checked = consented, onCheckedChange = onConsentedChange)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = consentPrompt,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    Text(
+        text = "提示：不勾选也可正常使用——仅公共搜索经反代，不会发送你的个人 Token。",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/** 第 3 步（可选）：Bangumi 个人同步——粘贴 Access Token。 */
+@Composable
+private fun BangumiPage(
     bangumiToken: String,
     onBangumiTokenChange: (String) -> Unit,
+    revealSecrets: Boolean,
+    onToggleReveal: () -> Unit,
+) {
+    Spacer(Modifier.height(16.dp))
+    Text(
+        text = "Bangumi 个人同步（可选）",
+        style = MaterialTheme.typography.headlineSmall,
+        fontWeight = FontWeight.Bold,
+    )
+    Spacer(Modifier.height(8.dp))
+    Text(
+        text = "粘贴 Bangumi Access Token 即可同步你的收藏 / 评分（在 ${OnboardingDefaults.BANGUMI_TOKEN_HELP_URL} 生成；" +
+            "也可稍后在设置里用 Bangumi 登录）。可留空跳过。",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(16.dp))
+    OutlinedTextField(
+        value = bangumiToken,
+        onValueChange = onBangumiTokenChange,
+        label = { Text("Access Token（可选）") },
+        singleLine = true,
+        visualTransformation = if (revealSecrets) VisualTransformation.None else PasswordVisualTransformation(),
+        modifier = Modifier.fillMaxWidth(),
+    )
+    RevealSecretsToggle(revealSecrets = revealSecrets, onToggleReveal = onToggleReveal)
+    Spacer(Modifier.height(8.dp))
+    Text(
+        text = "密钥仅加密保存在本机，不会上传。",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/** 第 4 步（可选）：AI 增强——OpenAI 兼容 API Key / Base URL / 模型名。 */
+@Composable
+private fun AiPage(
     aiApiKey: String,
     onAiApiKeyChange: (String) -> Unit,
     aiBaseUrl: String,
@@ -238,87 +405,53 @@ private fun QuickSetupSection(
     onToggleReveal: () -> Unit,
 ) {
     val mask = if (revealSecrets) VisualTransformation.None else PasswordVisualTransformation()
+    Spacer(Modifier.height(16.dp))
     Text(
-        text = "快速配置（可选，可跳过）",
-        style = MaterialTheme.typography.titleMedium,
-        fontWeight = FontWeight.SemiBold,
+        text = "AI 增强（可选）",
+        style = MaterialTheme.typography.headlineSmall,
+        fontWeight = FontWeight.Bold,
     )
-    Spacer(Modifier.height(4.dp))
+    Spacer(Modifier.height(8.dp))
     Text(
-        text = "以下均可留空，稍后在「我的 → 设置」补填。密钥仅加密保存在本机，不会上传。",
-        style = MaterialTheme.typography.bodySmall,
+        text = "填入 OpenAI 兼容服务的 API Key 可启用口味匹配 / 无剧透雷达（推荐 DeepSeek）；" +
+            "未填则自动回退本地规则。AI 调用会消耗你所配置服务的额度。",
+        style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    Spacer(Modifier.height(12.dp))
-
-    Card(
+    Spacer(Modifier.height(16.dp))
+    OutlinedTextField(
+        value = aiApiKey,
+        onValueChange = onAiApiKeyChange,
+        label = { Text("API Key（可选）") },
+        singleLine = true,
+        visualTransformation = mask,
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-    ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-            Text("Bangumi 个人同步", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = "粘贴 Bangumi Access Token 即可同步你的收藏 / 评分（在 ${OnboardingDefaults.BANGUMI_TOKEN_HELP_URL} 生成；" +
-                    "也可稍后在设置里用 Bangumi 登录）。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = bangumiToken,
-                onValueChange = onBangumiTokenChange,
-                label = { Text("Access Token（可选）") },
-                singleLine = true,
-                visualTransformation = mask,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-    }
-    Spacer(Modifier.height(12.dp))
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-    ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-            Text("AI 增强", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = "填入 OpenAI 兼容服务的 API Key 可启用口味匹配 / 无剧透雷达（推荐 DeepSeek）；" +
-                    "未填则自动回退本地规则。AI 调用会消耗你所配置服务的额度。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = aiApiKey,
-                onValueChange = onAiApiKeyChange,
-                label = { Text("API Key（可选）") },
-                singleLine = true,
-                visualTransformation = mask,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = aiBaseUrl,
-                onValueChange = onAiBaseUrlChange,
-                label = { Text("Base URL") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = aiModel,
-                onValueChange = onAiModelChange,
-                label = { Text("模型名") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-    }
+    )
     Spacer(Modifier.height(8.dp))
+    OutlinedTextField(
+        value = aiBaseUrl,
+        onValueChange = onAiBaseUrlChange,
+        label = { Text("Base URL") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(8.dp))
+    OutlinedTextField(
+        value = aiModel,
+        onValueChange = onAiModelChange,
+        label = { Text("模型名") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    RevealSecretsToggle(revealSecrets = revealSecrets, onToggleReveal = onToggleReveal)
+}
 
+/** 显示 / 隐藏已输入的 Token / API Key（Bangumi / AI 两步共用）。 */
+@Composable
+private fun RevealSecretsToggle(
+    revealSecrets: Boolean,
+    onToggleReveal: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -334,8 +467,13 @@ private fun QuickSetupSection(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
-    Spacer(Modifier.height(4.dp))
 }
+
+/** 引导向导总步数：介绍 / 同意 / Bangumi / AI。 */
+private const val ONBOARDING_PAGE_COUNT = 4
+
+/** 第 3 步（索引 2）起为可选配置项，顶部提供「跳过」直接完成。 */
+private const val FIRST_OPTIONAL_PAGE = 2
 
 @Preview(showBackground = true)
 @Composable

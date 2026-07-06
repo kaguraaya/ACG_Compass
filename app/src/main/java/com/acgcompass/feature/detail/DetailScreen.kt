@@ -555,7 +555,11 @@ private fun EditMyRecordDialog(
         onDismissRequest = onDismiss,
         title = { Text("编辑我的记录") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // B1：编辑记录内容较多（+ 软键盘弹出）时加竖向滚动，避免底部「仅自己可见」说明 / 开关被挤出看不全。
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 Text(
                     "提示：不选状态 = 清空（无状态）；评分 / 进度留空 = 清空。有进度会自动判为在看，看满总集数判为看过。",
                     style = MaterialTheme.typography.labelSmall,
@@ -867,11 +871,33 @@ private fun TasteMatchBlock(
                         progress = { tasteMatch.fraction },
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    Text(
-                        text = tasteMatch.reason,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    // A5②：分维度贡献理由（+ 命中 / − 拉低），正负分色，逐条展示可解释性。
+                    tasteMatch.reasons.forEach { r ->
+                        Text(
+                            text = (if (r.positive) "+ " else "− ") + r.text,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (r.positive) {
+                                MaterialTheme.colorScheme.onSurface
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
+                    if (tasteMatch.reason.isNotBlank()) {
+                        Text(
+                            text = tasteMatch.reason,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    // A5②：置信度文案（独立展示，不塞进理由长句）。
+                    tasteMatch.confidenceText?.let { conf ->
+                        Text(
+                            text = conf,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
 
                 is TasteMatchUiModel.Unavailable -> {

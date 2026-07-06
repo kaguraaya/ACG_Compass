@@ -16,7 +16,6 @@ import com.acgcompass.domain.model.TasteProfile
 import com.acgcompass.domain.model.Units
 import com.acgcompass.domain.model.Work
 import com.acgcompass.domain.taste.AdvancedTasteProfile
-import com.acgcompass.domain.taste.TasteCategory
 import com.acgcompass.domain.taste.TasteMatchResult
 import com.acgcompass.domain.usecase.AggregateRatingsUseCase
 import com.acgcompass.domain.usecase.PersonalTasteScorer
@@ -199,11 +198,26 @@ sealed interface TasteMatchUiModel {
         val qualitativeText: String,
         val fraction: Float,
         val reason: String,
+        /** A5②：分维度贡献理由（+ 命中 / − 拉低），供详情页逐条展示可解释性；空则不展示。 */
+        val reasons: List<TasteMatchReasonUi> = emptyList(),
+        /** A5②：置信度文案（如「置信度中等」）；null 则不展示。 */
+        val confidenceText: String? = null,
     ) : TasteMatchUiModel
 
     /** 尚未生成口味画像，或样本/标签不足以计算匹配度（[message] 说明具体原因，不伪造）。 */
     data class Unavailable(val message: String) : TasteMatchUiModel
 }
+
+/**
+ * A5②：口味匹配度的单条「可解释」贡献理由。
+ *
+ * @property text 展示文案（如「题材·奇幻」「题材组合·奇幻+异世界」）。
+ * @property positive 是否为正向贡献（true=拉高匹配，false=拉低）。
+ */
+data class TasteMatchReasonUi(
+    val text: String,
+    val positive: Boolean,
+)
 
 /**
  * 详情 Tab 的单页（RC.07.06 / 9.7）：简介 / 评论摘要 / 角色·Staff / 关联作品 / 观看路线 / 平台数据 / 我的记录。
@@ -787,22 +801,30 @@ private fun TasteMatchResult.toTasteMatchUi(): TasteMatchUiModel {
         else -> "可能不太喜欢"
     }
     val lowConf = confidence < 0.4
-    // A3：算法用全 12 维（含声优/staff/XP），但前端理由只呈现题材类（题材/组合/情节），避免太乱。
-    val topicReasons = reasons.filter {
-        it.category == TasteCategory.TOPIC || it.category == TasteCategory.COMBO || it.category == TasteCategory.DEVICE
-    }.ifEmpty { reasons }
-    val reasonCore = if (topicReasons.isNotEmpty()) {
-        "主要依据你的长期口味：命中「${topicReasons.take(3).joinToString("、") { it.label }}」"
-    } else {
-        "与你的口味画像重合较少，仅供参考"
+    // A5②：逐条呈现分维度贡献（含声优 / staff / 来源等，不再只压成一行），正/负向分色；取贡献绝对值最大的前几项。
+    val reasonUis = reasons
+        .sortedByDescending { kotlin.math.abs(it.contribution) }
+        .take(4)
+        .map { TasteMatchReasonUi(text = it.label, positive = it.contribution >= 0.0) }
+    val reasonCore = when {
+        reasonUis.any { it.positive } -> "综合你的长期口味给出（下方为主要依据）"
+        reasonUis.isNotEmpty() -> "主要是这些维度拉低了匹配（下方）"
+        else -> "与你的口味画像重合较少，仅供参考"
     }
     val ratedNote = if (isRated) "；你给这部评过分，已据此校准" else ""
-    val confNote = if (lowConf) "。注意：口味画像样本较少，置信度偏低，仅供参考" else ""
+    // A5②：置信度独立成文案（不再塞进理由长句）。
+    val confidenceText = when {
+        confidence < 0.4 -> "置信度偏低（样本较少，仅供参考）"
+        confidence < 0.7 -> "置信度中等"
+        else -> "置信度较高"
+    }
     return TasteMatchUiModel.Available(
         percentText = "$score%",
         qualitativeText = if (lowConf) "$qualitative（低置信）" else qualitative,
         fraction = fraction,
-        reason = "$reasonCore$ratedNote$confNote",
+        reason = "$reasonCore$ratedNote",
+        reasons = reasonUis,
+        confidenceText = confidenceText,
     )
 }
 

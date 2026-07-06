@@ -12,6 +12,7 @@ import com.acgcompass.data.datastore.SettingsDataStore
 import com.acgcompass.data.remote.bangumi.BangumiTokenRefresher
 import com.acgcompass.data.sync.SyncScheduler
 import com.acgcompass.data.sync.TasteProfileAutoUpdater
+import dagger.Lazy
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -43,11 +44,13 @@ class AcgCompassApplication : Application(), Configuration.Provider, ImageLoader
 
     @Inject lateinit var settingsDataStore: SettingsDataStore
 
-    @Inject lateinit var syncScheduler: SyncScheduler
+    // E：以下三个重依赖改用 dagger.Lazy——其依赖图（Room / 网络客户端 / 仓库）在首次 get()
+    // 时才构建；启动时统一在后台 appScope 触发 get()，把构建成本移出主线程，避免冷启动 / 开屏掉帧。
+    @Inject lateinit var syncScheduler: Lazy<SyncScheduler>
 
-    @Inject lateinit var tasteProfileAutoUpdater: TasteProfileAutoUpdater
+    @Inject lateinit var tasteProfileAutoUpdater: Lazy<TasteProfileAutoUpdater>
 
-    @Inject lateinit var bangumiTokenRefresher: BangumiTokenRefresher
+    @Inject lateinit var bangumiTokenRefresher: Lazy<BangumiTokenRefresher>
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -76,15 +79,20 @@ class AcgCompassApplication : Application(), Configuration.Provider, ImageLoader
 
     override fun onCreate() {
         super.onCreate()
-        // H7：间隔变化即时重新调度；0 表示关闭。
-        settingsDataStore.autoSyncIntervalMinutes
-            .distinctUntilChanged()
-            .onEach { minutes -> syncScheduler.apply(minutes) }
-            .launchIn(appScope)
-        // P1-3：个人收藏变化（同步入库 / 详情页改状态 / 加待补池）→ 防抖后自动重算口味画像。
-        tasteProfileAutoUpdater.start(appScope)
-        // RC.02 4.6：Bangumi OAuth token 启动期自动续期（best-effort，静默；无 refresh_token 时直接跳过）。
-        appScope.launch { runCatching { bangumiTokenRefresher.refreshIfNeeded() } }
+        // E：把启动初始化整体移出主线程（后台 appScope / Dispatchers.Default）——依赖图构建
+        //（Room / 网络客户端 / 仓库）与观察者注册都在后台完成，避免冷启动 / 开屏期间在主线程
+        // 构建依赖图并与开屏动效争抢，减少掉帧。均为 best-effort，绝不阻塞 UI 起步。
+        appScope.launch {
+            // H7：自动同步间隔变化即时重新调度；0 表示关闭。
+            settingsDataStore.autoSyncIntervalMinutes
+                .distinctUntilChanged()
+                .onEach { minutes -> syncScheduler.get().apply(minutes) }
+                .launchIn(appScope)
+            // P1-3：个人收藏变化（同步入库 / 详情页改状态 / 加待补池）→ 防抖后自动重算口味画像。
+            tasteProfileAutoUpdater.get().start(appScope)
+            // RC.02 4.6：Bangumi OAuth token 启动期自动续期（best-effort，静默；无 refresh_token 时跳过）。
+            runCatching { bangumiTokenRefresher.get().refreshIfNeeded() }
+        }
     }
 
     companion object {

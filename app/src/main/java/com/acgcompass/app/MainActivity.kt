@@ -6,8 +6,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -34,10 +36,18 @@ class MainActivity : ComponentActivity() {
         setContent {
             AcgCompassTheme {
                 Box(modifier = Modifier.fillMaxSize()) {
-                    AcgApp()
                     // P：动态开屏动效覆盖层。rememberSaveable 保证仅冷启动播放一次；
                     // 动画播完淡出后移除，直接露出主页（配置变更 / 重组不重播）。
                     var showSplash by rememberSaveable { mutableStateOf(true) }
+                    // E：冷启动首帧只组合轻量的开屏动效，让动画在未被阻塞的主线程上顺滑起步；
+                    // 重量级的 AcgApp（整棵导航树 + 首屏 VM + Coil）延后到下一帧再组合（≈一帧，
+                    // 几乎不影响可交互时间），避免首帧同步组合整棵界面树与开屏动效争抢主线程而掉帧。
+                    // 配置变更（showSplash=false）时立即组合，不延后。
+                    var composeContent by remember { mutableStateOf(!showSplash) }
+                    LaunchedEffect(Unit) { composeContent = true }
+                    if (composeContent) {
+                        AcgApp()
+                    }
                     if (showSplash) {
                         HoshimiSplash(onFinished = { showSplash = false })
                     }

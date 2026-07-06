@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <!-- 现图对照（还原当前在用图标）：深蓝底 + 浅蓝环 + 白色四芒星（上下长、左右短） -->
+  <rect x="0" y="0" width="108" height="108" rx="24" fill="#1F2A44"/>
+  <circle cx="54" cy="54" r="24" fill="none" stroke="#7FB3FF" stroke-width="4"/>
+  <path d="M54,26 L59,49 L66,54 L59,59 L54,82 L49,59 L42,54 L49,49 Z" fill="#FFFFFF"/>
+</svg>

@@ -1,6 +1,7 @@
 package com.acgcompass.feature.backlog
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
@@ -17,6 +19,9 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -27,6 +32,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -44,6 +50,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -227,10 +235,12 @@ fun BacklogScreen(
                         state = state,
                         selectionMode = selectionMode,
                         selectedIds = selectedIds,
+                        gridMode = gridMode,
                         onSetPriority = onSetPriority,
                         onSetNote = onSetNote,
                         onToggleSelect = onToggleSelect,
                         onOpenDetail = onOpenDetail,
+                        modifier = Modifier.weight(1f),
                     )
                 }
                 else -> {
@@ -259,6 +269,7 @@ fun BacklogScreen(
                         onSetNote = onSetNote,
                         onToggleSelect = onToggleSelect,
                         onOpenDetail = onOpenDetail,
+                        modifier = Modifier.weight(1f),
                     )
                 }
             }
@@ -285,10 +296,11 @@ private fun BacklogList(
     onToggleSelect: (String) -> Unit,
     onOpenDetail: (String) -> Unit,
     gridMode: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     StateScaffold(
         state = state,
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize(),
     ) { cards ->
         if (gridMode && !selectionMode) {
             // H14：网格排版——3 列，仅显示封面 + 标题，省空间。
@@ -326,15 +338,20 @@ private fun BacklogList(
     }
 }
 
-/** H14：网格单元——封面（2:3）+ 标题两行，点击进详情。 */
+/** H14：网格单元——封面（2:3）+ 标题两行。H2：多选模式下点击切换选中并显示勾选覆盖层，否则进详情。 */
 @Composable
 private fun BacklogGridItem(
     card: BacklogCardItem,
     onOpenDetail: (String) -> Unit,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
+    onToggleSelect: (String) -> Unit = {},
 ) {
     val model = card.toWorkCardUiModel()
     Column(
-        modifier = Modifier.clickable { onOpenDetail(card.workId) },
+        modifier = Modifier.clickable {
+            if (selectionMode) onToggleSelect(card.workId) else onOpenDetail(card.workId)
+        },
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Box(
@@ -352,6 +369,25 @@ private fun BacklogGridItem(
                 )
             } else {
                 Text("暂无封面", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            // H2：多选态——选中加主色半透明遮罩，右上角勾选图标（实心=选中 / 空心=未选）。
+            if (selectionMode) {
+                if (selected) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)),
+                    )
+                }
+                Icon(
+                    imageVector = if (selected) Icons.Filled.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
+                    contentDescription = if (selected) "已选中" else "未选中",
+                    tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp)
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f), RoundedCornerShape(50)),
+                )
             }
         }
         Text(
@@ -552,9 +588,12 @@ private fun FilterSortBar(
     onToggleDustMuseumFilter: (Boolean?) -> Unit,
     onClearFilters: () -> Unit,
 ) {
+    // H1：展开后的筛选 / 排序内容较多，给板块限高 + 竖向滚动，避免撑高卡片挤压下方列表区。
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(max = 260.dp)
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {

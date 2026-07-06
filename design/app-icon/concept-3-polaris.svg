@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <!-- 概念 3「北极星指针」：指针指向顶部发光北极星，夜空星点，极简叙事「罗盘指向你的那颗星」 -->
+  <defs>
+    <radialGradient id="bg3" cx="50%" cy="24%" r="92%">
+      <stop offset="0%" stop-color="#1D2A5C"/>
+      <stop offset="100%" stop-color="#070B18"/>
+    </radialGradient>
+    <radialGradient id="glow3" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#BFE0FF" stop-opacity="0.75"/>
+      <stop offset="100%" stop-color="#BFE0FF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="needle3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFE7A6"/>
+      <stop offset="100%" stop-color="#EFA637"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="108" height="108" rx="24" fill="url(#bg3)"/>
+  <!-- 淡罗盘环 -->
+  <circle cx="54" cy="58" r="30" fill="none" stroke="#4C6BB0" stroke-width="1.4" opacity="0.55"/>
+  <!-- 夜空星点 -->
+  <g fill="#CFE0FF">
+    <circle cx="28" cy="40" r="1.4" opacity="0.8"/>
+    <circle cx="82" cy="34" r="1.1" opacity="0.7"/>
+    <circle cx="86" cy="64" r="1.3" opacity="0.75"/>
+    <circle cx="24" cy="70" r="1.1" opacity="0.65"/>
+    <circle cx="66" cy="86" r="1.2" opacity="0.6"/>
+  </g>
+  <!-- 指针指向北极星（北金南白） -->
+  <polygon points="54,34 59,60 49,60" fill="url(#needle3)"/>
+  <polygon points="54,78 59,60 49,60" fill="#C8D8F2"/>
+  <circle cx="54" cy="60" r="4.4" fill="#070B18" stroke="#7FB3FF" stroke-width="1.3"/>
+  <!-- 北极星（顶部发光大星） -->
+  <circle cx="54" cy="21" r="13" fill="url(#glow3)"/>
+  <path d="M54,10 L56.2,18.8 L65,21 L56.2,23.2 L54,32 L51.8,23.2 L43,21 L51.8,18.8 Z" fill="#FFFFFF"/>
+</svg>

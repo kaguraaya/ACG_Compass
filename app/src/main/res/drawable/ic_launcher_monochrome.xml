@@ -4,11 +4,11 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Android 13+ 主题图标（原生亮/暗自适应）：单色轮廓，系统按主题自动着色。形状与前景一致：圆环 + 四芒星指针。 -->
+    <!-- Android 13+ 主题图标：单色轮廓（系统按主题着色）。形状与前景一致：八芒星（大四芒 + 小四芒）。 -->
     <path
         android:fillColor="#1F2A44"
-        android:pathData="M54,54 m-26,0 a26,26 0 1,0 52,0 a26,26 0 1,0 -52,0 M54,54 m-22,0 a22,22 0 1,1 44,0 a22,22 0 1,1 -44,0 Z" />
+        android:pathData="M63,45 L59,54 L63,63 L54,59 L45,63 L49,54 L45,45 L54,49 Z" />
     <path
         android:fillColor="#1F2A44"
-        android:pathData="M54,26 L59,49 L66,54 L59,59 L54,82 L49,59 L42,54 L49,49 Z" />
+        android:pathData="M54,24 L60,48 L84,54 L60,60 L54,84 L48,60 L24,54 L48,48 Z" />
 </vector>

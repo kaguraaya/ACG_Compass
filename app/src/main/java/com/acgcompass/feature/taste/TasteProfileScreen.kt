@@ -35,6 +35,9 @@ import com.acgcompass.data.taste.TagClassifyProgress
 import com.acgcompass.data.taste.TasteRefreshProgress
 import com.acgcompass.domain.model.TagBucket
 import com.acgcompass.domain.model.TasteProfile
+import com.acgcompass.domain.taste.AdvancedTasteProfile
+import com.acgcompass.domain.taste.TasteCategory
+import com.acgcompass.domain.taste.TopicCombo
 import kotlin.math.roundToInt
 
 /** 口味画像路由入口（RC.10）。 */
@@ -51,6 +54,7 @@ fun TasteProfileRoute(
     val refreshProgress by viewModel.refreshProgress.collectAsStateWithLifecycle()
     val classifying by viewModel.classifying.collectAsStateWithLifecycle()
     val tagClassifyProgress by viewModel.tagClassifyProgress.collectAsStateWithLifecycle()
+    val advancedProfile by viewModel.advancedProfile.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
     androidx.compose.runtime.LaunchedEffect(message) {
         message?.let {
@@ -71,6 +75,8 @@ fun TasteProfileRoute(
         onRefreshAnalysis = { viewModel.onRefreshAnalysis() },
         classifying = classifying,
         tagClassifyProgress = tagClassifyProgress,
+        // A5①：12 维引擎画像，供画像页展示更丰富的维度 / 组合 / 概况。
+        advancedProfile = advancedProfile,
         // N3：手动 AI 标签分维分类（细化本地兜底为题材的未知标签）。
         onClassifyTags = { viewModel.onClassifyTags() },
         modifier = modifier,
@@ -88,6 +94,7 @@ fun TasteProfileScreen(
     refreshProgress: TasteRefreshProgress? = null,
     classifying: Boolean = false,
     tagClassifyProgress: TagClassifyProgress? = null,
+    advancedProfile: AdvancedTasteProfile? = null,
     onImportData: () -> Unit = {},
     onRefreshAnalysis: () -> Unit = {},
     onClassifyTags: () -> Unit = {},
@@ -122,31 +129,43 @@ fun TasteProfileScreen(
                     ),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                // A4：手动重新分析入口——评分 / 标签变动后一键重算画像 + 联网补全 12 维特征。
-                androidx.compose.material3.OutlinedButton(
-                    onClick = onRefreshAnalysis,
-                    enabled = !importing,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(if (importing) "正在重新分析…" else "重新分析口味画像（联网补全 12 维特征）")
+                // A2/A4：把「重新分析」「AI 分维分类」两个操作理清进同一张「分析与优化」卡片；按钮只保留短标签、
+                // 长说明下移为小字（不再把括号说明夹进按钮里），进度条紧跟对应操作下方（A3）。
+                SectionCard("分析与优化") {
+                    Text(
+                        "上次分析：${formatLastUpdated(profile.generatedAt)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = onRefreshAnalysis,
+                        enabled = !importing,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (importing) "正在重新分析…" else "重新分析画像")
+                    }
+                    Text(
+                        "重算口味画像并联网补全 12 维特征（评分 / 标签变动后用）",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    // A3：联网分析进度（自动 / 手动进行中显示，紧跟按钮下方）。
+                    refreshProgress?.let { RefreshProgressContent(it) }
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = onClassifyTags,
+                        enabled = !classifying && !importing,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (classifying) "正在分维分类…" else "AI 标签分维分类")
+                    }
+                    Text(
+                        "把兜底为题材的未知社区标签交 AI 归入更精确维度并缓存，提升画像 / 评分",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    // A3：分维分类进度（紧跟按钮下方）。
+                    tagClassifyProgress?.let { TagClassifyProgressContent(it) }
                 }
-                // B：上次分析时间。
-                Text(
-                    "上次分析：${formatLastUpdated(profile.generatedAt)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                // B：联网分析进度条（自动 / 手动分析进行中时显示）。
-                refreshProgress?.let { RefreshProgressCard(it) }
-                // N3：AI 标签分维分类入口——把本地兜底为题材的未知社区标签交 AI 归入更精确维度并缓存，提升画像 / 评分。
-                androidx.compose.material3.OutlinedButton(
-                    onClick = onClassifyTags,
-                    enabled = !classifying && !importing,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(if (classifying) "正在分维分类…" else "AI 标签分维分类（细化未知标签维度）")
-                }
-                tagClassifyProgress?.let { TagClassifyProgressCard(it) }
                 val lowSample = profile.confidence < 0.3f
                 if (lowSample) {
                     Text(
@@ -170,6 +189,12 @@ fun TasteProfileScreen(
                     StatLine("常见分段", profile.commonScoreBand ?: "暂无数据")
                 }
 
+                // A5①：12 维引擎画像——按维度拆解偏好 + 偏爱题材组合（仅在画像可用时展示）。
+                advancedProfile?.takeIf { it.isUsable }?.let { adv ->
+                    TasteDimensionsSection(adv)
+                    TasteCombosSection(adv.combos)
+                }
+
                 val highTags = profile.tagStats.filter { it.bucket == TagBucket.HIGH_SCORE }.map { it.tagName }
                 val lowTags = profile.tagStats.filter { it.bucket == TagBucket.LOW_SCORE }.map { it.tagName }
                 SectionCard("高分倾向标签") {
@@ -184,6 +209,11 @@ fun TasteProfileScreen(
                 }
                 SectionCard("口味黑洞（常被搁置 / 抛弃）") {
                     if (profile.blackHole.isEmpty()) Text("暂无数据") else FlowRowChips(profile.blackHole)
+                }
+
+                // A5①：画像概况——真实样本量 + 各维度数据覆盖率（透明度 / 可信度）。
+                advancedProfile?.takeIf { it.isUsable }?.let { adv ->
+                    ProfileOverviewSection(adv)
                 }
             }
         }
@@ -212,50 +242,116 @@ private fun StatLine(label: String, value: String) {
     )
 }
 
-/** B：联网分析进度卡——补齐特征阶段显示确定进度条 + “x/N”；构建阶段无总量走不确定条。 */
+/** A5①：口味维度——把偏好按 12 维（题材 / 角色类型 / 声优 / 来源…）拆解，每维展示代表标签。 */
 @Composable
-private fun RefreshProgressCard(progress: TasteRefreshProgress) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            val label = when (progress.phase) {
-                TasteRefreshProgress.Phase.FETCHING_RATED -> "正在补齐已评分作品特征"
-                TasteRefreshProgress.Phase.FETCHING_POOL -> "正在补齐候选池特征（提升未评分作品打分准确度）"
-                TasteRefreshProgress.Phase.BUILDING -> "正在构建口味画像"
-            }
-            val suffix = if (progress.isDeterminate) "（${progress.current}/${progress.total}）" else ""
-            Text("$label$suffix", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-            if (progress.isDeterminate) {
-                LinearProgressIndicator(progress = { progress.fraction }, modifier = Modifier.fillMaxWidth())
-            } else {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+private fun TasteDimensionsSection(profile: AdvancedTasteProfile) {
+    val dims = DIMENSION_DISPLAY_ORDER.mapNotNull { cat ->
+        val pref = profile.categories[cat] ?: return@mapNotNull null
+        val likes = pref.positive.entries
+            .sortedByDescending { it.value }
+            .take(6)
+            .map { it.key }
+        if (likes.isEmpty()) null else cat to likes
+    }
+    if (dims.isEmpty()) return
+    SectionCard("口味维度") {
+        Text(
+            "按不同维度拆解你的偏好：标签来自你高分作品的社区标签，越靠前越偏爱。",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        dims.forEach { (cat, likes) ->
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(cat.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                FlowRowChips(likes)
             }
         }
     }
 }
 
-/** N3：AI 标签分维分类进度卡——确定进度条 + “done/total”。 */
+/** A5①：偏爱的题材组合——从高分样本挖掘的题材 / 情节组合，按强度取前若干。 */
 @Composable
-private fun TagClassifyProgressCard(progress: TagClassifyProgress) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            val total = progress.total.coerceAtLeast(1)
-            Text(
-                "正在用 AI 分维分类标签（${progress.done}/${progress.total}）",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Bold,
-            )
-            LinearProgressIndicator(
-                progress = { progress.done.toFloat() / total },
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
+private fun TasteCombosSection(combos: List<TopicCombo>) {
+    val top = combos.sortedByDescending { it.strength }.take(8)
+    if (top.isEmpty()) return
+    SectionCard("偏爱的题材组合") {
+        Text(
+            "从你的高分作品里挖掘出的题材 / 情节组合，越靠前越常见。",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        FlowRowChips(top.map { it.tags.joinToString(" + ") })
     }
+}
+
+/** A5①：画像概况——真实样本量 + 用户均分 + 各维度数据覆盖率（透明度 / 可信度）。 */
+@Composable
+private fun ProfileOverviewSection(profile: AdvancedTasteProfile) {
+    SectionCard("画像概况") {
+        StatLine("参与画像的评分样本", "${profile.sampleCount} 部")
+        if (profile.userAvgRating > 0.0) {
+            StatLine("你的平均分", "${oneDecimal(profile.userAvgRating.toFloat())} 分")
+        }
+        Text(
+            "各维度数据覆盖（越高说明该维度线索越充分，匹配越可信）",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        StatLine("题材 / 标签", coveragePercent(profile.coverage.tag))
+        StatLine("制作阵容", coveragePercent(profile.coverage.staff))
+        StatLine("评价语义", coveragePercent(profile.coverage.comment))
+        StatLine("年代", coveragePercent(profile.coverage.time))
+    }
+}
+
+/** 覆盖率 [0,1] → 百分比文案；≤0 显示「暂无」。 */
+private fun coveragePercent(v: Double): String =
+    if (v <= 0.0) "暂无" else "${(v * 100).roundToInt()}%"
+
+/** A5①：口味维度展示顺序（跳过 COMBO 单列 / COMMUNITY 技术先验 / NOISE 噪声）。 */
+private val DIMENSION_DISPLAY_ORDER: List<TasteCategory> = listOf(
+    TasteCategory.TOPIC,
+    TasteCategory.DEVICE,
+    TasteCategory.XP,
+    TasteCategory.CHARACTER,
+    TasteCategory.STAFF,
+    TasteCategory.CV,
+    TasteCategory.SOURCE,
+    TasteCategory.TIME,
+    TasteCategory.MEME,
+    TasteCategory.COMMENT,
+)
+
+/** B/A3：联网分析进度内容（内联于「分析与优化」卡片）——补齐特征阶段确定进度条 + “x/N”；构建阶段走不确定条。 */
+@Composable
+private fun RefreshProgressContent(progress: TasteRefreshProgress) {
+    val label = when (progress.phase) {
+        TasteRefreshProgress.Phase.FETCHING_RATED -> "正在补齐已评分作品特征"
+        TasteRefreshProgress.Phase.FETCHING_POOL -> "正在补齐候选池特征（提升未评分作品打分准确度）"
+        TasteRefreshProgress.Phase.BUILDING -> "正在构建口味画像"
+    }
+    val suffix = if (progress.isDeterminate) "（${progress.current}/${progress.total}）" else ""
+    Text("$label$suffix", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+    if (progress.isDeterminate) {
+        LinearProgressIndicator(progress = { progress.fraction }, modifier = Modifier.fillMaxWidth())
+    } else {
+        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+    }
+}
+
+/** N3/A3：AI 标签分维分类进度内容（内联于「分析与优化」卡片）——确定进度条 + “done/total”。 */
+@Composable
+private fun TagClassifyProgressContent(progress: TagClassifyProgress) {
+    val total = progress.total.coerceAtLeast(1)
+    Text(
+        "正在用 AI 分维分类标签（${progress.done}/${progress.total}）",
+        style = MaterialTheme.typography.bodyMedium,
+        fontWeight = FontWeight.Bold,
+    )
+    LinearProgressIndicator(
+        progress = { progress.done.toFloat() / total },
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 /** B：将画像生成时间（epoch 毫秒）格式化为本地时间字符串；≤0 视为尚未分析。 */

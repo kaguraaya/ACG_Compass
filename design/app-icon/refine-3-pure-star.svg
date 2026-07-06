@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <!-- 微调 3「纯星·双色」：去环只留一枚大对称四芒星，NW 白 / SE 浅蓝出微体积（无渐变无黄）。星味最足 -->
+  <rect x="0" y="0" width="108" height="108" rx="24" fill="#1F2A44"/>
+  <!-- 整星白底 -->
+  <path d="M54,23 L60,48 L85,54 L60,60 L54,85 L48,60 L23,54 L48,48 Z" fill="#FFFFFF"/>
+  <!-- SE 两臂浅蓝暗面 -->
+  <polygon points="85,54 60,48 54,54 60,60" fill="#6E93D6"/>
+  <polygon points="54,85 60,60 54,54 48,60" fill="#6E93D6"/>
+</svg>

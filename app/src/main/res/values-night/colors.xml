@@ -2,4 +2,6 @@
 <resources>
     <!-- O：启动窗口底色（暗色）——取品牌深色 surface（AcgSurfaceDark #12131A），暗色模式冷启动不再闪亮色。 -->
     <color name="launch_background">#12131A</color>
+    <!-- 图标底色（暗夜）：黑。大四芒主体在黑底上反色为白（承接 F 图标重设计）。 -->
+    <color name="ic_launcher_background">#12131A</color>
 </resources>

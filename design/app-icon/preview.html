@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ACG Compass 图标设计稿 · 挑选</title>
+<style>
+  :root { --card: #ffffff; --ink: #1c2333; --muted: #5b667e; --line: #e6e9f2; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; color: var(--ink); background: #f3f5fa; }
+  header { padding: 28px 24px 8px; }
+  header h1 { margin: 0 0 6px; font-size: 22px; }
+  header p { margin: 4px 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
+  .tip { background: #fff7e6; border: 1px solid #ffe1a6; color: #8a5a00; padding: 10px 14px; border-radius: 10px; display: inline-block; margin-top: 8px; font-size: 14px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; padding: 18px 24px 40px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; box-shadow: 0 2px 10px rgba(20,30,60,.05); }
+  .card h2 { margin: 0; padding: 16px 18px 4px; font-size: 17px; }
+  .card .desc { margin: 0; padding: 0 18px 14px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+  .walls { display: grid; grid-template-columns: 1fr 1fr; }
+  .wall { padding: 18px 12px 20px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  .wall.day { background: linear-gradient(160deg, #eaf1ff, #f9fbff); }
+  .wall.night { background: linear-gradient(160deg, #10131f, #1a2138); }
+  .wall .label { font-size: 12px; letter-spacing: .08em; opacity: .8; }
+  .wall.day .label { color: #4a5878; }
+  .wall.night .label { color: #b9c6e6; }
+  .row { display: flex; align-items: flex-end; gap: 16px; }
+  .ic { display: block; background-size: cover; }
+  .squircle { border-radius: 24%; }
+  .circle { border-radius: 50%; }
+  .s96 { width: 96px; height: 96px; }
+  .s48 { width: 48px; height: 48px; }
+  .cap { text-align: center; font-size: 11px; margin-top: 6px; }
+  .wall.day .cap { color: #6b7794; }
+  .wall.night .cap { color: #8ea0c8; }
+  .shadow { box-shadow: 0 6px 16px rgba(0,0,0,.18); }
+  footer { padding: 0 24px 40px; color: var(--muted); font-size: 13px; line-height: 1.7; }
+  code { background: #eef1f8; padding: 1px 6px; border-radius: 5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ACG Compass · 应用图标设计稿（第三轮 · 基于现图微调）</h1>
+  <p>基于<b>当前在用图标</b>改：深蓝底 + 浅蓝环 + 白色四芒星不变，<b>去掉黄色</b>；把四芒星<b>左右两臂加长到与上下一致</b>（对称），并给几种「更偏星、弱化纯指南针」的方向。每版在 <b>日间浅色</b> 与 <b>暗夜深色</b> 桌面背景下、<b>圆角方</b>（squircle）与 <b>圆形</b> 两种系统蒙版、多尺寸预览。</p>
+  <span class="tip">挑选方式：直接回复编号（如「微调 1」）即可，可指出想微调处（星大小 / 环粗细 / 有无环 / 配色）；我据此生成自适应图标（前景/背景矢量 + Android 13 单色主题图标）并做开屏进入动画。</span>
+  <div style="display:flex;align-items:center;gap:14px;margin-top:14px;">
+    <img src="current-reference.svg" style="width:64px;height:64px;border-radius:24%;box-shadow:0 4px 12px rgba(0,0,0,.18);">
+    <div style="font-size:13px;color:var(--muted);line-height:1.6;">&larr; <b>现图（对照）</b>：四芒星上下长、左右短、带浅蓝环。下面各版即在此基础上把左右加长 / 换法，并去黄。</div>
+  </div>
+</header>
+
+<div class="grid">
+
+  <div class="card">
+    <h2>微调 1 · 对称星·穿环</h2>
+    <p class="desc">完全沿用现图（深蓝底 + 浅蓝环 + 白星），仅把四芒星左右两臂加长到与上下一致。改动最小、最稳。开屏宜做星体旋转 / 缩放归位。</p>
+    <div class="walls">
+      <div class="wall day"><span class="label">日间</span>
+        <div class="row">
+          <div><img class="ic squircle s96 shadow" src="refine-1-symmetric-ring.svg"><div class="cap">圆角方</div></div>
+          <div><img class="ic circle s96 shadow" src="refine-1-symmetric-ring.svg"><div class="cap">圆形</div></div>
+          <div><img class="ic squircle s48 shadow" src="refine-1-symmetric-ring.svg"><div class="cap">48</div></div>
+        </div>
+      </div>
+      <div class="wall night"><span class="label">暗夜</span>
+        <div class="row">
+          <div><img class="ic squircle s96 shadow" src="refine-1-symmetric-ring.svg"><div class="cap">圆角方</div></div>
+          <div><img class="ic circle s96 shadow" src="refine-1-symmetric-ring.svg"><div class="cap">圆形</div></div>
+          <div><img class="ic squircle s48 shadow" src="refine-1-symmetric-ring.svg"><div class="cap">48</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>微调 2 · 对称星·环内</h2>
+    <p class="desc">对称四芒星收进环内，更规整干净（白星 + 浅蓝环、无黄）。开屏宜做环旋入 + 星点亮。</p>
+    <div class="walls">
+      <div class="wall day"><span class="label">日间</span>
+        <div class="row">
+          <div><img class="ic squircle s96 shadow" src="refine-2-star-in-ring.svg"><div class="cap">圆角方</div></div>
+          <div><img class="ic circle s96 shadow" src="refine-2-star-in-ring.svg"><div class="cap">圆形</div></div>
+          <div><img class="ic squircle s48 shadow" src="refine-2-star-in-ring.svg"><div class="cap">48</div></div>
+        </div>
+      </div>
+      <div class="wall night"><span class="label">暗夜</span>
+        <div class="row">
+          <div><img class="ic squircle s96 shadow" src="refine-2-star-in-ring.svg"><div class="cap">圆角方</div></div>
+          <div><img class="ic circle s96 shadow" src="refine-2-star-in-ring.svg"><div class="cap">圆形</div></div>
+          <div><img class="ic squircle s48 shadow" src="refine-2-star-in-ring.svg"><div class="cap">48</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>微调 3 · 纯星·双色</h2>
+    <p class="desc">去掉环、只留一枚大对称四芒星，NW 白 / SE 浅蓝出微体积（无渐变无黄）。星味最足、最干净。开屏宜做星体旋入放大。</p>
+    <div class="walls">
+      <div class="wall day"><span class="label">日间</span>
+        <div class="row">
+          <div><img class="ic squircle s96 shadow" src="refine-3-pure-star.svg"><div class="cap">圆角方</div></div>
+          <div><img class="ic circle s96 shadow" src="refine-3-pure-star.svg"><div class="cap">圆形</div></div>
+          <div><img class="ic squircle s48 shadow" src="refine-3-pure-star.svg"><div class="cap">48</div></div>
+        </div>
+      </div>
+      <div class="wall night"><span class="label">暗夜</span>
+        <div class="row">
+          <div><img class="ic squircle s96 shadow" src="refine-3-pure-star.svg"><div class="cap">圆角方</div></div>
+          <div><img class="ic circle s96 shadow" src="refine-3-pure-star.svg"><div class="cap">圆形</div></div>
+          <div><img class="ic squircle s48 shadow" src="refine-3-pure-star.svg"><div class="cap">48</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>微调 4 · 八芒星</h2>
+    <p class="desc">4 长（白）+ 4 短（浅蓝）叠成八芒 sparkle，无环无黄；星味足又保留指向感。开屏宜做双层星错时旋入。</p>
+    <div class="walls">
+      <div class="wall day"><span class="label">日间</span>
+        <div class="row">
+          <div><img class="ic squircle s96 shadow" src="refine-4-sparkle.svg"><div class="cap">圆角方</div></div>
+          <div><img class="ic circle s96 shadow" src="refine-4-sparkle.svg"><div class="cap">圆形</div></div>
+          <div><img class="ic squircle s48 shadow" src="refine-4-sparkle.svg"><div class="cap">48</div></div>
+        </div>
+      </div>
+      <div class="wall night"><span class="label">暗夜</span>
+        <div class="row">
+          <div><img class="ic squircle s96 shadow" src="refine-4-sparkle.svg"><div class="cap">圆角方</div></div>
+          <div><img class="ic circle s96 shadow" src="refine-4-sparkle.svg"><div class="cap">圆形</div></div>
+          <div><img class="ic squircle s48 shadow" src="refine-4-sparkle.svg"><div class="cap">48</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  <p>说明：图标底色为品牌深蓝满幅背景，系统会自动裁成圆/圆角方/水滴等形状（上方已模拟）。所谓「日间/暗夜两套」指——① 桌面图标本身在浅色/深色壁纸下都清晰（上方两栏对比）；② Android 13+ 会用<b>单色主题图标</b>随系统主题自动着色，我会同时生成；③ 开屏与 App 内 Logo 会各出亮/暗配色。</p>
+  <p>选定后我将产出：<code>ic_launcher_foreground.xml</code>（前景矢量）、背景（渐变或纯色 <code>ic_launcher_background</code>）、<code>ic_launcher_monochrome.xml</code>（主题图标），并重做 <code>HoshimiSplash.kt</code> 的进入动画以呼应新图标。</p>
+</footer>
+</body>
+</html>

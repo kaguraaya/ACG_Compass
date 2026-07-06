@@ -83,8 +83,12 @@ class AiTagClassifier @Inject constructor(
 
             var classified = 0
             var notConfigured = false
+            // A1：区分「AI 一次都没成功返回」（AiUnresponsive）与「返回了但维度全不合规」（Done(0)），文案更准确。
+            var anyAiResponded = false
             _progress.value = TagClassifyProgress(0, candidates.size)
             loop@ for ((i, batch) in batches.withIndex()) {
+                // A1：批「前」先推进进度，避免首批 AI 请求（可能十几秒）期间进度条一直停在 0，观感像「没跑就报错」。
+                _progress.value = TagClassifyProgress(done = minOf(i * BATCH_SIZE, candidates.size), total = candidates.size)
                 val task = AiTask.TagClassify(
                     content = buildContent(batch),
                     tags = batch,
@@ -92,6 +96,7 @@ class AiTagClassifier @Inject constructor(
                 )
                 when (val r = aiEngine.run(task, AiRunOptions(confirmed = true))) {
                     is AiRunResult.Success -> {
+                        anyAiResponded = true
                         val entities = mapToEntities(r.payload, batch)
                         if (entities.isNotEmpty()) {
                             runCatching { tagDimensionDao.upsertAll(entities) }
@@ -114,6 +119,7 @@ class AiTagClassifier @Inject constructor(
             _progress.value = null
             when {
                 notConfigured && classified == 0 -> TagClassifyOutcome.NotConfigured
+                classified == 0 && !anyAiResponded -> TagClassifyOutcome.AiUnresponsive
                 else -> TagClassifyOutcome.Done(classified = classified, requested = candidates.size)
             }
         }
@@ -124,19 +130,15 @@ class AiTagClassifier @Inject constructor(
         runCatching { tagDimensionDao.count() }.getOrDefault(0)
     }
 
-    /** 把 AI 输出映射为缓存实体：仅保留维度合法（[TasteCategory.fromKey]）且属于本批的标签，去重。 */
+    /** 把 AI 输出映射为缓存实体；核心「输出 → (标签,维度)」解析见 [resolveTagDimensionAssignments]（位置对齐兜底 + 维度别名容错）。 */
     private fun mapToEntities(output: TagClassifyOutput, batch: List<String>): List<TagDimensionEntity> {
-        if (output.items.isEmpty()) return emptyList()
-        val batchKeys = batch.mapTo(HashSet()) { TagClassifier.clean(it) }
+        val assignments = resolveTagDimensionAssignments(output, batch)
+        if (assignments.isEmpty()) return emptyList()
         val now = System.currentTimeMillis()
-        val seen = HashSet<String>()
         val confidence = output.confidence.coerceIn(0f, 1f)
-        return output.items.mapNotNull { item ->
-            val key = TagClassifier.clean(item.tag)
-            if (key.isEmpty() || key !in batchKeys || !seen.add(key)) return@mapNotNull null
-            val category = TasteCategory.fromKey(item.dimension) ?: return@mapNotNull null
+        return assignments.map { (tag, category) ->
             TagDimensionEntity(
-                tag = key,
+                tag = tag,
                 dimension = category.key,
                 source = "AI",
                 confidence = confidence,
@@ -173,4 +175,38 @@ sealed interface TagClassifyOutcome {
 
     /** AI 未配置：已回退本地规则，未做任何分类。 */
     data object NotConfigured : TagClassifyOutcome
+
+    /** A1：AI 每批都未返回合法结果（网络失败 / 模型不支持结构化输出 / 低置信），未做任何分类。 */
+    data object AiUnresponsive : TagClassifyOutcome
+}
+
+/**
+ * N3 / A1：把 AI 一批分维输出解析为「清洗后标签 → 维度」列表（纯函数，可单测）。保序、去重；命中规则：
+ * 1. AI 回填的 `tag` 清洗后落在本批输入内 → 直接采用；
+ * 2. 否则，当 `items` 数与本批一致时按**位置**回填输入原 tag（prompt 要求逐一、顺序一致输出，
+ *    信任顺序而非模型改写的文本，消除「tag 对不上 → 整批丢弃 → classified=0」误报）；
+ * 3. 维度经 [TasteCategory.fromKey]（含近义别名）解析，非法 / 派生维度丢弃（不编造，RC.14.03）。
+ */
+internal fun resolveTagDimensionAssignments(
+    output: TagClassifyOutput,
+    batch: List<String>,
+): List<Pair<String, TasteCategory>> {
+    if (output.items.isEmpty()) return emptyList()
+    val cleanedBatch = batch.map { TagClassifier.clean(it) }
+    val batchKeys = cleanedBatch.toHashSet()
+    val alignByIndex = output.items.size == batch.size
+    val seen = HashSet<String>()
+    val result = ArrayList<Pair<String, TasteCategory>>(output.items.size)
+    output.items.forEachIndexed { idx, item ->
+        val aiKey = TagClassifier.clean(item.tag)
+        val key = when {
+            aiKey.isNotEmpty() && aiKey in batchKeys -> aiKey
+            alignByIndex -> cleanedBatch[idx]
+            else -> return@forEachIndexed
+        }
+        if (key.isEmpty() || !seen.add(key)) return@forEachIndexed
+        val category = TasteCategory.fromKey(item.dimension) ?: return@forEachIndexed
+        result += key to category
+    }
+    return result
 }

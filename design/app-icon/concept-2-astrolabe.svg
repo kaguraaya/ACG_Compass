@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <!-- 概念 2「星盘」：点阵刻度表盘（罗盘）+ 中心大四芒星（星）+ 柔光 + 散落小星 -->
+  <defs>
+    <radialGradient id="bg2" cx="38%" cy="30%" r="88%">
+      <stop offset="0%" stop-color="#2E357A"/>
+      <stop offset="100%" stop-color="#0C0F2A"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFD479" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#FFD479" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="star2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFE7A6"/>
+      <stop offset="100%" stop-color="#F4B23E"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="108" height="108" rx="24" fill="url(#bg2)"/>
+  <!-- 点阵刻度表盘 -->
+  <circle cx="54" cy="54" r="33" fill="none" stroke="#7FB3FF" stroke-width="5" stroke-dasharray="1.4 6.1" opacity="0.85"/>
+  <!-- 内环 -->
+  <circle cx="54" cy="54" r="26" fill="none" stroke="#5C7FCF" stroke-width="1.2" opacity="0.6"/>
+  <!-- 中心柔光 -->
+  <circle cx="54" cy="54" r="26" fill="url(#glow2)"/>
+  <!-- 中心大四芒星 -->
+  <path d="M54,34 L58.6,49.4 L74,54 L58.6,58.6 L54,74 L49.4,58.6 L34,54 L49.4,49.4 Z" fill="url(#star2)"/>
+  <circle cx="54" cy="54" r="3.2" fill="#0C0F2A" opacity="0.35"/>
+  <!-- 散落小星 -->
+  <g fill="#DCE9FF">
+    <path d="M30,31 L31,34 L34,35 L31,36 L30,39 L29,36 L26,35 L29,34 Z" opacity="0.9"/>
+    <path d="M80,40 L80.8,42.4 L83.2,43.2 L80.8,44 L80,46.4 L79.2,44 L76.8,43.2 L79.2,42.4 Z" opacity="0.8"/>
+    <path d="M70,79 L70.8,81.4 L73.2,82.2 L70.8,83 L70,85.4 L69.2,83 L66.8,82.2 L69.2,81.4 Z" opacity="0.7"/>
+  </g>
+</svg>

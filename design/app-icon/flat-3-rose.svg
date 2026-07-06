@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <!-- 扁平 3「罗盘玫瑰」：双色平涂八芒罗盘星，无渐变、靠明暗面出体积，北臂金色。最像指南针、规整 -->
+  <rect x="0" y="0" width="108" height="108" rx="24" fill="#1F2A44"/>
+  <!-- 次级斜向短星（垫底） -->
+  <path d="M64,44 L60,54 L64,64 L54,60 L44,64 L48,54 L44,44 L54,48 Z" fill="#4E6FB8"/>
+  <!-- 主八芒星（每臂两面平涂：亮面 / 暗面；北臂金色） -->
+  <polygon points="54,26 48,48 54,54" fill="#FFE3AC"/>
+  <polygon points="54,26 54,54 60,48" fill="#EDA43C"/>
+  <polygon points="82,54 60,48 54,54" fill="#EAF1FF"/>
+  <polygon points="82,54 54,54 60,60" fill="#6E93D6"/>
+  <polygon points="54,82 60,60 54,54" fill="#EAF1FF"/>
+  <polygon points="54,82 54,54 48,60" fill="#6E93D6"/>
+  <polygon points="26,54 48,60 54,54" fill="#EAF1FF"/>
+  <polygon points="26,54 54,54 48,48" fill="#6E93D6"/>
+  <!-- 中心轴 -->
+  <circle cx="54" cy="54" r="3.5" fill="#1F2A44"/>
+</svg>

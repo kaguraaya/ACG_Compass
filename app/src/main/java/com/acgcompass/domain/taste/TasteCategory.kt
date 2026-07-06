@@ -84,10 +84,37 @@ enum class TasteCategory(val key: String, val defaultWeight: Float) {
         fun fromKey(key: String?): TasteCategory? {
             val k = key?.trim()?.lowercase().orEmpty()
             if (k.isEmpty()) return null
-            return SINGLE_TAG_CATEGORIES.firstOrNull { it.key == k }
+            SINGLE_TAG_CATEGORIES.firstOrNull { it.key == k }?.let { return it }
+            // N3 修复：不支持 json_schema 的中转站上 enum 约束失效，模型常返回中文 / 近义 dimension；
+            // 这里按白名单把明确近义映射回单标签维度，避免可用响应被判非法而整批丢弃（classified=0 误报）。
+            // 仅映射到 SINGLE_TAG_CATEGORIES；派生维度（combo/comment/community）与无意义串仍返回 null（不编造）。
+            return DIMENSION_ALIASES[k]
         }
 
         /** 参与「题材组合挖掘」的来源大类（文档：只对题材单标签 + 情节装置做组合）。 */
         val COMBO_SOURCE_CATEGORIES: List<TasteCategory> = listOf(TOPIC, DEVICE)
+
+        /**
+         * N3：维度近义别名 → 单标签维度（白名单，全小写键）。供 [fromKey] 容错模型在不支持
+         * 结构化输出时返回的中文 / 近义 dimension；只映射明确近义，绝不含派生维度或无意义串。
+         */
+        private val DIMENSION_ALIASES: Map<String, TasteCategory> = mapOf(
+            "题材" to TOPIC, "类型" to TOPIC, "genre" to TOPIC, "genres" to TOPIC,
+            "theme" to TOPIC, "themes" to TOPIC, "topics" to TOPIC,
+            "情节" to DEVICE, "情节装置" to DEVICE, "装置" to DEVICE, "plot" to DEVICE,
+            "narrative" to DEVICE, "trope" to DEVICE, "tropes" to DEVICE,
+            "角色类型" to XP, "萌属性" to XP, "属性" to XP, "moe" to XP, "archetype" to XP,
+            "角色" to CHARACTER, "角色名" to CHARACTER, "人物" to CHARACTER,
+            "char" to CHARACTER, "characters" to CHARACTER,
+            "制作" to STAFF, "制作阵容" to STAFF, "阵容" to STAFF, "staffs" to STAFF,
+            "studio" to STAFF, "director" to STAFF,
+            "声优" to CV, "配音" to CV, "seiyuu" to CV, "voice" to CV, "va" to CV,
+            "来源" to SOURCE, "改编来源" to SOURCE, "改编" to SOURCE,
+            "adaptation" to SOURCE, "origin" to SOURCE,
+            "年代" to TIME, "时间" to TIME, "年份" to TIME, "year" to TIME,
+            "date" to TIME, "season" to TIME,
+            "社区梗" to MEME, "梗" to MEME, "黑话" to MEME, "slang" to MEME,
+            "噪声" to NOISE, "噪音" to NOISE,
+        )
     }
 }

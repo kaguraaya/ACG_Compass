@@ -43,6 +43,8 @@ data class ExploreCardUiModel(
     val tags: List<String>,
     /** D：作品简介（主源 `summary`，卡片单击翻面展示）；缺失为 `null`，翻面显示「暂无简介」不伪造。 */
     val synopsis: String?,
+    /** C2：背面简介懒加载中标记——翻面时若无本地简介则联网补齐，加载期间背面显示「加载中」。 */
+    val synopsisLoading: Boolean = false,
 )
 
 /**

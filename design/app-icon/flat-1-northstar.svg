@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <!-- 扁平 1「北极星」：单枚简洁四芒星，北向点金。纯平涂、大留白、最极简 -->
+  <rect x="0" y="0" width="108" height="108" rx="24" fill="#1F2A44"/>
+  <path d="M54,25 L60.36,47.64 L76,54 L60.36,60.36 L54,83 L47.64,60.36 L32,54 L47.64,47.64 Z" fill="#F4F8FF"/>
+  <polygon points="54,25 60.36,47.64 54,54 47.64,47.64" fill="#FFC24D"/>
+</svg>

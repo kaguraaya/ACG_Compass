@@ -2,9 +2,11 @@ package com.acgcompass.feature.explore
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.acgcompass.core.common.AppResult
 import com.acgcompass.data.local.dao.RecommendationExposureDao
 import com.acgcompass.data.local.dao.UserCollectionDao
 import com.acgcompass.data.local.entity.RecommendationExposureEntity
+import com.acgcompass.data.remote.bangumi.BangumiRemoteDataSource
 import com.acgcompass.data.taste.TasteEngine
 import com.acgcompass.domain.model.MediaType
 import com.acgcompass.domain.model.Work
@@ -37,6 +39,7 @@ class ExploreQueueViewModel @Inject constructor(
     private val userCollectionDao: UserCollectionDao,
     private val tasteEngine: TasteEngine,
     private val exposureDao: RecommendationExposureDao,
+    private val bangumi: BangumiRemoteDataSource,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<ExploreQueueUiState>(ExploreQueueUiState.Loading)
@@ -139,6 +142,41 @@ class ExploreQueueViewModel @Inject constructor(
         } else {
             st.copy(index = next)
         }
+    }
+
+    /** C2：正在联网补齐简介的 workId（去重，避免重复请求）。 */
+    private val synopsisInFlight = mutableSetOf<String>()
+
+    /** C2：已成功尝试过补齐简介的 workId（含「确实无简介」）——不再重试；失败不记，允许下次翻面重试。 */
+    private val synopsisAttempted = mutableSetOf<String>()
+
+    /**
+     * C2：翻到背面时懒加载作品简介。探索候选多来自榜单 / 发现池（`WorkEntity` 无 `summary`），
+     * 故此处按主源（Bangumi subjectId = 数字 workId）单条拉取补齐，成功后就地写回当前批次卡片，
+     * 背面即时刷新。去重（[synopsisInFlight]）+ 已尝试标记（[synopsisAttempted]）避免重复请求；
+     * 联网失败不标记、下次可重试；全程兜底不崩溃（RC.03.04 / RC.17.4）。
+     */
+    fun loadSynopsis(workId: String) {
+        val ready = _state.value as? ExploreQueueUiState.Ready ?: return
+        val card = ready.cards.firstOrNull { it.workId == workId } ?: return
+        if (card.synopsis != null || workId in synopsisAttempted || workId in synopsisInFlight) return
+        val sid = workId.toIntOrNull() ?: return
+        synopsisInFlight += workId
+        updateCard(workId) { it.copy(synopsisLoading = true) }
+        viewModelScope.launch {
+            val res = runCatching { bangumi.getSubject(sid) }.getOrNull()
+            synopsisInFlight -= workId
+            val summary = (res as? AppResult.Success)?.data?.summary?.trim()?.takeIf { it.isNotBlank() }
+            // 仅联网成功（含确实无简介）标记已尝试，失败保留可重试。
+            if (res is AppResult.Success) synopsisAttempted += workId
+            updateCard(workId) { it.copy(synopsis = summary, synopsisLoading = false) }
+        }
+    }
+
+    /** 在当前 Ready 批次中按 workId 就地更新卡片（不改 index，保持翻面 / 滑动手势状态）。 */
+    private fun updateCard(workId: String, transform: (ExploreCardUiModel) -> ExploreCardUiModel) {
+        val ready = _state.value as? ExploreQueueUiState.Ready ?: return
+        _state.value = ready.copy(cards = ready.cards.map { if (it.workId == workId) transform(it) else it })
     }
 
     private companion object {

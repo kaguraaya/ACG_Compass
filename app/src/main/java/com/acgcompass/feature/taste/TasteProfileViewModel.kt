@@ -14,6 +14,7 @@ import com.acgcompass.data.taste.TasteEngine
 import com.acgcompass.data.taste.TasteRefreshProgress
 import com.acgcompass.domain.model.TasteProfile
 import com.acgcompass.domain.repository.TasteProfileRepository
+import com.acgcompass.domain.taste.AdvancedTasteProfile
 import com.acgcompass.domain.usecase.TasteInputRecord
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -53,6 +54,9 @@ class TasteProfileViewModel @Inject constructor(
 
     /** N3：AI 标签分维分类进度（进度条），透传分类器进度流；null = 无分类进行中。 */
     val tagClassifyProgress: StateFlow<TagClassifyProgress?> = aiTagClassifier.observeProgress()
+
+    /** A5：12 维引擎画像（各维度偏好 / 题材组合 / 样本量 / 覆盖率 / 均分），供画像页「更丰富」展示；null=尚未构建。 */
+    val advancedProfile: StateFlow<AdvancedTasteProfile?> = tasteEngine.observeProfile()
 
     private val _classifying = MutableStateFlow(false)
     val classifying: StateFlow<Boolean> = _classifying.asStateFlow()
@@ -183,10 +187,12 @@ class TasteProfileViewModel @Inject constructor(
                             runCatching { tasteEngine.rebuildFromCache() }
                             "已用 AI 分维分类 ${outcome.classified} 个标签"
                         } else {
-                            "本轮未新增分类（AI 未返回可用结果）"
+                            // A1：AI 有返回但落库 0——多为模型未按要求输出维度 key；给出可操作提示而非笼统「未返回」。
+                            "本轮未新增分类：AI 返回的维度不合规，建议更换支持 JSON 结构化输出的模型后重试"
                         }
                     TagClassifyOutcome.NothingToDo -> "没有待分类的新标签"
                     TagClassifyOutcome.NotConfigured -> "未配置 AI，已回退本地规则（可在设置中配置 AI）"
+                    TagClassifyOutcome.AiUnresponsive -> "AI 多次未返回合法结果，请检查所选模型 / 网络后重试"
                 }
             } catch (e: CancellationException) {
                 throw e

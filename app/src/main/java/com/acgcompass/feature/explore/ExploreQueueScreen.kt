@@ -86,6 +86,7 @@ fun ExploreQueueRoute(
         onSkip = viewModel::onSkip,
         onRegenerate = viewModel::generate,
         onOpenWork = onOpenWork,
+        onEnsureSynopsis = viewModel::loadSynopsis,
         onBack = onBack,
     )
 }
@@ -102,6 +103,7 @@ fun ExploreQueueScreen(
     onSkip: () -> Unit,
     onRegenerate: () -> Unit,
     onOpenWork: (String) -> Unit,
+    onEnsureSynopsis: (String) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -150,6 +152,7 @@ fun ExploreQueueScreen(
                             onLike = onLike,
                             onSkip = onSkip,
                             onOpenWork = onOpenWork,
+                            onEnsureSynopsis = onEnsureSynopsis,
                         )
                     }
                 }
@@ -166,6 +169,7 @@ private fun ReadyContent(
     onLike: () -> Unit,
     onSkip: () -> Unit,
     onOpenWork: (String) -> Unit,
+    onEnsureSynopsis: (String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     // key 绑定 workId：切换到下一张时重建归零，避免位移残留。
@@ -176,6 +180,8 @@ private fun ReadyContent(
     var flipped by remember(card.workId) { mutableStateOf(false) }
     val rotation = remember(card.workId) { Animatable(0f) }
     LaunchedEffect(card.workId, flipped) {
+        // C2：翻到背面时懒加载简介（本地候选常无 summary）；loadSynopsis 内部去重 / 失败可重试。
+        if (flipped) onEnsureSynopsis(card.workId)
         rotation.animateTo(if (flipped) 180f else 0f, animationSpec = tween(durationMillis = 420))
     }
 
@@ -193,7 +199,8 @@ private fun ReadyContent(
         ) {
             Card(
                 modifier = Modifier
-                    .fillMaxWidth()
+                    // C3：正反面都填满卡片区（不再由内容高度决定），翻面尺寸一致、不缩水。
+                    .fillMaxSize()
                     .offset { IntOffset(offsetX.value.roundToInt(), 0) }
                     .graphicsLayer {
                         rotationY = rotation.value
@@ -303,13 +310,31 @@ private fun ExploreCardFront(card: ExploreCardUiModel) {
                 TagRow(card.tags)
             }
             Spacer(Modifier.height(12.dp))
-            Text(
-                "点击卡片看简介 · ← 左滑暂不感兴趣　右滑加入待补池 →",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            // C4：底部提示三段错开——左滑靠左 / 点击居中 / 右滑靠右，与手势方向一一对应，避免长句换行。
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                textAlign = TextAlign.Center,
-            )
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "← 左滑暂不",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+                Text(
+                    "点击看简介",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+                Text(
+                    "右滑加入 →",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
         }
     }
 }
@@ -332,15 +357,25 @@ private fun ExploreCardBack(card: ExploreCardUiModel, onOpenWork: (String) -> Un
             Spacer(Modifier.height(12.dp))
             Text("简介", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(6.dp))
-            Text(
-                card.synopsis ?: "暂无简介（点击「查看详情」在详情页加载）",
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (card.synopsis != null) {
-                    MaterialTheme.colorScheme.onSurface
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-            )
+            // C2：三态——有简介 / 加载中 / 确实无简介（不伪造）。
+            val synopsis = card.synopsis
+            when {
+                synopsis != null -> Text(
+                    synopsis,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                card.synopsisLoading -> Text(
+                    "简介加载中…",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                else -> Text(
+                    "暂无简介（点击「查看详情」在详情页加载）",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Spacer(Modifier.height(16.dp))
             Button(onClick = { onOpenWork(card.workId) }, modifier = Modifier.fillMaxWidth()) {
                 Text("查看详情")

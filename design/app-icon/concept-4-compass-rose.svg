@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <!-- 概念 4「罗盘玫瑰」：对称八芒罗盘星（星与指南针合一，修正原图上下长左右短的不对称），北向金色 -->
+  <defs>
+    <radialGradient id="bg4" cx="36%" cy="30%" r="86%">
+      <stop offset="0%" stop-color="#31447B"/>
+      <stop offset="100%" stop-color="#0D1526"/>
+    </radialGradient>
+    <linearGradient id="rose4" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E4EEFF"/>
+      <stop offset="100%" stop-color="#8FB3EF"/>
+    </linearGradient>
+    <linearGradient id="north4" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFE1A6"/>
+      <stop offset="100%" stop-color="#EDA43C"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="108" height="108" rx="24" fill="url(#bg4)"/>
+  <!-- 细环 -->
+  <circle cx="54" cy="54" r="33" fill="none" stroke="#7FB3FF" stroke-width="1.6" opacity="0.55"/>
+  <!-- 次级斜向四芒（较短，深蓝，垫底） -->
+  <path d="M64.6,43.4 L60,54 L64.6,64.6 L54,60 L43.4,64.6 L48,54 L43.4,43.4 L54,48 Z" fill="#4E79C0"/>
+  <!-- 主四芒罗盘星（正向，长） -->
+  <path d="M54,24 L60.36,47.64 L84,54 L60.36,60.36 L54,84 L47.64,60.36 L24,54 L47.64,47.64 Z" fill="url(#rose4)"/>
+  <!-- 北向臂（金色，覆盖顶臂） -->
+  <polygon points="54,24 60.36,47.64 54,54 47.64,47.64" fill="url(#north4)"/>
+  <!-- 中心轴 -->
+  <circle cx="54" cy="54" r="5" fill="#0E1730"/>
+  <circle cx="54" cy="54" r="1.9" fill="#FFDF97"/>
+</svg>

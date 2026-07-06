@@ -69,6 +69,21 @@ class TagClassifierAiOverrideTest : StringSpec({
         TasteCategory.fromKey(null) shouldBe null
     }
 
+    "TasteCategory.fromKey：A1 近义别名（中文 / 英文）映射到单标签维度" {
+        // 模型在不支持结构化输出时常返回中文 / 近义 dimension；白名单别名容错，避免可用响应被整批丢弃。
+        TasteCategory.fromKey("题材") shouldBe TasteCategory.TOPIC
+        TasteCategory.fromKey("genre") shouldBe TasteCategory.TOPIC
+        TasteCategory.fromKey("情节") shouldBe TasteCategory.DEVICE
+        TasteCategory.fromKey("moe") shouldBe TasteCategory.XP
+        TasteCategory.fromKey("角色") shouldBe TasteCategory.CHARACTER
+        TasteCategory.fromKey("声优") shouldBe TasteCategory.CV
+        TasteCategory.fromKey("改编") shouldBe TasteCategory.SOURCE
+        TasteCategory.fromKey("年代") shouldBe TasteCategory.TIME
+        TasteCategory.fromKey("梗") shouldBe TasteCategory.MEME
+        // 别名大小写不敏感 + trim。
+        TasteCategory.fromKey(" Genre ") shouldBe TasteCategory.TOPIC
+    }
+
     "featurize：空 override 时未知标签进 TOPIC；不进 DEVICE/XP" {
         val feature = WorkFeature(
             subjectId = "w1",

@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <!-- 概念 1「星针罗盘」：细长分色指南针指针（北金南白）+ 精致刻度圆环 + 右上星芒点缀 -->
+  <defs>
+    <radialGradient id="bg1" cx="36%" cy="30%" r="85%">
+      <stop offset="0%" stop-color="#34477F"/>
+      <stop offset="100%" stop-color="#0D1526"/>
+    </radialGradient>
+    <linearGradient id="needleN1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFDF97"/>
+      <stop offset="100%" stop-color="#F2A63A"/>
+    </linearGradient>
+    <linearGradient id="needleS1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#BFD3F2"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="108" height="108" rx="24" fill="url(#bg1)"/>
+  <!-- 圆环（细环 + 外层柔光） -->
+  <circle cx="54" cy="54" r="33" fill="none" stroke="#7FB3FF" stroke-width="6" opacity="0.12"/>
+  <circle cx="54" cy="54" r="33" fill="none" stroke="#7FB3FF" stroke-width="2" opacity="0.9"/>
+  <!-- 四正刻度 -->
+  <g stroke="#CFE0FF" stroke-width="2.4" stroke-linecap="round">
+    <line x1="54" y1="17.5" x2="54" y2="24"/>
+    <line x1="54" y1="90.5" x2="54" y2="84"/>
+    <line x1="17.5" y1="54" x2="24" y2="54"/>
+    <line x1="90.5" y1="54" x2="84" y2="54"/>
+  </g>
+  <!-- 四隅次刻度 -->
+  <g stroke="#7FB3FF" stroke-width="1.6" stroke-linecap="round" opacity="0.7">
+    <line x1="29.6" y1="29.6" x2="33.2" y2="33.2"/>
+    <line x1="78.4" y1="29.6" x2="74.8" y2="33.2"/>
+    <line x1="29.6" y1="78.4" x2="33.2" y2="74.8"/>
+    <line x1="78.4" y1="78.4" x2="74.8" y2="74.8"/>
+  </g>
+  <!-- 分色指针（北金 / 南白） -->
+  <polygon points="54,26 61,54 47,54" fill="url(#needleN1)"/>
+  <polygon points="54,82 61,54 47,54" fill="url(#needleS1)"/>
+  <!-- 中心轴 -->
+  <circle cx="54" cy="54" r="5" fill="#0E1730" stroke="#7FB3FF" stroke-width="1.4"/>
+  <!-- 星芒点缀（右上） -->
+  <path d="M75,26.5 L76.6,31.4 L81.5,33 L76.6,34.6 L75,39.5 L73.4,34.6 L68.5,33 L73.4,31.4 Z" fill="#FFDF97"/>
+</svg>

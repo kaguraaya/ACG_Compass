@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <!-- 微调 1「对称星·穿环」：完全沿用现图（深蓝底 + 浅蓝环 + 白色四芒星），仅把左右两臂加长到与上下一致 -->
+  <rect x="0" y="0" width="108" height="108" rx="24" fill="#1F2A44"/>
+  <circle cx="54" cy="54" r="24" fill="none" stroke="#7FB3FF" stroke-width="4"/>
+  <path d="M54,26 L59,49 L82,54 L59,59 L54,82 L49,59 L26,54 L49,49 Z" fill="#FFFFFF"/>
+</svg>
