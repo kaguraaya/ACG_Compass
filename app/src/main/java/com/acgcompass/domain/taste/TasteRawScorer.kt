@@ -47,15 +47,53 @@ object TasteRawScorer {
             val cat = TagClassifier.classify(tc.name, ctx, overrides)
             if (cat == TasteCategory.NOISE) continue
             val q = TasteScoringParams.tagStrength(tc.count, maxCount)
-            add(cat, cleaned, q)
-            if (cat == TasteCategory.TOPIC || cat == TasteCategory.DEVICE) topicDevice += cleaned
+            // #9：时间标签落 5 年桶（2014年4月/2013年10月 → 2010-2014），使同代不同季度聚合成年代偏好。
+            val key = if (cat == TasteCategory.TIME) TagClassifier.timeBucket(cleaned) else cleaned
+            add(cat, key, q)
+            if (cat == TasteCategory.TOPIC || cat == TasteCategory.DEVICE) topicDevice += key
         }
         // 结构化真实名按「出现即满强度」并入对应维度（无标注人数，q=1.0）。
         for (s in feature.staff) add(TasteCategory.STAFF, TagClassifier.clean(s), 1.0)
         for (c in feature.cv) add(TasteCategory.CV, TagClassifier.clean(c), 1.0)
         for (ch in feature.characters) add(TasteCategory.CHARACTER, TagClassifier.clean(ch), 1.0)
 
+        // #10：实体维度（STAFF/CV/CHARACTER）为身份权威——若同一名字也被社区标签误分进内容维度
+        // （TOPIC/DEVICE/XP/MEME/SOURCE/TIME），从内容维度剔除，消除「同名既在题材又在制作阵容」的双重
+        // 归类与重复计分。以结构化名为准（它们来自作品真实 staff/角色/CV 字段，比社区标签可信）。
+        dedupeEntityNamesFromContent(byCat, topicDevice)
+
         return Featurized(byCat.mapValues { it.value.toMap() }, topicDevice)
+    }
+
+    /** #10：参与去重的内容维度（人名一旦落在这些维度且同名于结构化实体，即视为误分类，剔除）。 */
+    private val CONTENT_CATEGORIES: List<TasteCategory> = listOf(
+        TasteCategory.TOPIC, TasteCategory.DEVICE, TasteCategory.XP,
+        TasteCategory.MEME, TasteCategory.SOURCE, TasteCategory.TIME,
+    )
+
+    /**
+     * #10：以结构化实体维度（STAFF/CV/CHARACTER）为权威，从内容维度剔除同名键，消除双重归类。
+     * 同步把被剔除的键移出 [topicDevice]，避免人名混入题材组合命中。就地修改 [byCat] / [topicDevice]。
+     */
+    private fun dedupeEntityNamesFromContent(
+        byCat: HashMap<TasteCategory, HashMap<String, Double>>,
+        topicDevice: HashSet<String>,
+    ) {
+        val entityNames = buildSet {
+            addAll(byCat[TasteCategory.STAFF]?.keys.orEmpty())
+            addAll(byCat[TasteCategory.CV]?.keys.orEmpty())
+            addAll(byCat[TasteCategory.CHARACTER]?.keys.orEmpty())
+        }
+        if (entityNames.isEmpty()) return
+        for (cat in CONTENT_CATEGORIES) {
+            val m = byCat[cat] ?: continue
+            for (name in entityNames) {
+                if (m.remove(name) != null && (cat == TasteCategory.TOPIC || cat == TasteCategory.DEVICE)) {
+                    topicDevice -= name
+                }
+            }
+            if (m.isEmpty()) byCat.remove(cat)
+        }
     }
 
     /** 单大类相似度 `sim_c = Σ q·U^+ /(||U^+||+ε) - λ·Σ q·U^- /(||U^-||+ε)`。 */

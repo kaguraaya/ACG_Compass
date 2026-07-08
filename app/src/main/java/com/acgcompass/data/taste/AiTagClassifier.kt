@@ -130,6 +130,24 @@ class AiTagClassifier @Inject constructor(
         runCatching { tagDimensionDao.count() }.getOrDefault(0)
     }
 
+    /**
+     * RC.20.2e：AI「升维」效果摘要——本地规则会把未知社区标签统统兜底成笼统的「题材」；这里统计 AI 已把多少
+     * 这类标签细化到了哪些**更精确**的维度（情节 / 角色类型 / 来源 / 年代 / 社区梗…），按标签数降序。
+     * 供画像页展示分类的实际收益（而非只有一个「已分类 N 个」的 Toast）。读失败返回空摘要（UI 隐藏该区）。
+     */
+    suspend fun dimensionSummary(): TagDimensionSummary = withContext(dispatchers.io) {
+        val counts = runCatching { tagDimensionDao.getDimensionCounts() }.getOrDefault(emptyList())
+        val byCategory = counts
+            .mapNotNull { row -> TasteCategory.fromKey(row.dimension)?.let { it to row.count } }
+            .groupBy({ it.first }, { it.second })
+            .map { (cat, list) -> TagDimensionBucket(category = cat, count = list.sum()) }
+            .sortedByDescending { it.count }
+        TagDimensionSummary(
+            total = byCategory.sumOf { it.count },
+            buckets = byCategory,
+        )
+    }
+
     /** 把 AI 输出映射为缓存实体；核心「输出 → (标签,维度)」解析见 [resolveTagDimensionAssignments]（位置对齐兜底 + 维度别名容错）。 */
     private fun mapToEntities(output: TagClassifyOutput, batch: List<String>): List<TagDimensionEntity> {
         val assignments = resolveTagDimensionAssignments(output, batch)
@@ -179,6 +197,17 @@ sealed interface TagClassifyOutcome {
     /** A1：AI 每批都未返回合法结果（网络失败 / 模型不支持结构化输出 / 低置信），未做任何分类。 */
     data object AiUnresponsive : TagClassifyOutcome
 }
+
+/**
+ * RC.20.2e：AI「升维」效果摘要（[AiTagClassifier.dimensionSummary]）。[total] 为已被 AI 从笼统「题材」
+ * 兜底细化出去的标签总数；[buckets] 为各精确维度的标签数（降序）。UI 据此展示分维分类的实际收益。
+ */
+data class TagDimensionSummary(val total: Int, val buckets: List<TagDimensionBucket>) {
+    val isEmpty: Boolean get() = total <= 0 || buckets.isEmpty()
+}
+
+/** RC.20.2e：单个维度的升维计数——[category] 精确维度，[count] 该维度下 AI 分维的标签数。 */
+data class TagDimensionBucket(val category: TasteCategory, val count: Int)
 
 /**
  * N3 / A1：把 AI 一批分维输出解析为「清洗后标签 → 维度」列表（纯函数，可单测）。保序、去重；命中规则：

@@ -32,6 +32,7 @@ import com.acgcompass.core.ui.ScreenContentPadding
 import com.acgcompass.core.ui.StateScaffold
 import com.acgcompass.core.ui.UiState
 import com.acgcompass.data.taste.TagClassifyProgress
+import com.acgcompass.data.taste.TagDimensionSummary
 import com.acgcompass.data.taste.TasteRefreshProgress
 import com.acgcompass.domain.model.TagBucket
 import com.acgcompass.domain.model.TasteProfile
@@ -55,6 +56,7 @@ fun TasteProfileRoute(
     val classifying by viewModel.classifying.collectAsStateWithLifecycle()
     val tagClassifyProgress by viewModel.tagClassifyProgress.collectAsStateWithLifecycle()
     val advancedProfile by viewModel.advancedProfile.collectAsStateWithLifecycle()
+    val dimensionSummary by viewModel.dimensionSummary.collectAsStateWithLifecycle()
     val context = androidx.compose.ui.platform.LocalContext.current
     androidx.compose.runtime.LaunchedEffect(message) {
         message?.let {
@@ -77,6 +79,8 @@ fun TasteProfileRoute(
         tagClassifyProgress = tagClassifyProgress,
         // A5①：12 维引擎画像，供画像页展示更丰富的维度 / 组合 / 概况。
         advancedProfile = advancedProfile,
+        // RC.20.2e：AI 升维效果摘要（把多少兜底为「题材」的标签细化到了哪些精确维度）。
+        dimensionSummary = dimensionSummary,
         // N3：手动 AI 标签分维分类（细化本地兜底为题材的未知标签）。
         onClassifyTags = { viewModel.onClassifyTags() },
         modifier = modifier,
@@ -95,6 +99,7 @@ fun TasteProfileScreen(
     classifying: Boolean = false,
     tagClassifyProgress: TagClassifyProgress? = null,
     advancedProfile: AdvancedTasteProfile? = null,
+    dimensionSummary: TagDimensionSummary? = null,
     onImportData: () -> Unit = {},
     onRefreshAnalysis: () -> Unit = {},
     onClassifyTags: () -> Unit = {},
@@ -166,6 +171,8 @@ fun TasteProfileScreen(
                     // A3：分维分类进度（紧跟按钮下方）。
                     tagClassifyProgress?.let { TagClassifyProgressContent(it) }
                 }
+                // RC.20.2e：AI 升维效果——展示分维分类把多少笼统「题材」标签细化到了哪些精确维度。
+                dimensionSummary?.takeIf { !it.isEmpty }?.let { TagDimensionUpgradeSection(it) }
                 val lowSample = profile.confidence < 0.3f
                 if (lowSample) {
                     Text(
@@ -281,6 +288,41 @@ private fun TasteCombosSection(combos: List<TopicCombo>) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         FlowRowChips(top.map { it.tags.joinToString(" + ") })
+    }
+}
+
+/**
+ * RC.20.2e：AI「升维」效果——本地规则把大量未知社区标签统统兜底成笼统「题材」；这里展示 AI 分维分类
+ * 已把多少这类标签细化到了哪些**更精确**的维度（情节 / 角色类型 / 来源 / 年代 / 社区梗…），让用户看到
+ * 「AI 标签分维分类」按钮的实际收益，而非只有一次性 Toast。噪声维度另行说明（已从画像主分剔除）。
+ */
+@Composable
+private fun TagDimensionUpgradeSection(summary: TagDimensionSummary) {
+    val refined = summary.buckets.filter { it.category != TasteCategory.NOISE }
+    val noiseCount = summary.buckets.firstOrNull { it.category == TasteCategory.NOISE }?.count ?: 0
+    val refinedTotal = refined.sumOf { it.count }
+    SectionCard("AI 升维效果") {
+        Text(
+            "原本被笼统归为「题材」的社区标签，经 AI 分维分类已细化到更精确的维度，" +
+                "让画像与评分更懂你的偏好。",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (refinedTotal > 0) {
+            Text(
+                "已升维 $refinedTotal 个标签",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            FlowRowChips(refined.map { "${it.category.label} × ${it.count}" })
+        }
+        if (noiseCount > 0) {
+            Text(
+                "另有 $noiseCount 个被识别为噪声（如泄漏标题 / 联想梗），已从画像主分中剔除。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

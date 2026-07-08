@@ -120,6 +120,27 @@ object TagClassifier {
     fun clean(raw: String): String =
         raw.replace('_', ' ').replace('-', ' ').trim().replace(Regex("\\s+"), " ").lowercase()
 
+    /** 从时间标签中提取 4 位年份（1900–2099）；无有效年份返回 `null`。 */
+    private val YEAR_IN_TAG = Regex("(19|20)\\d{2}")
+
+    /** 年代分档桶宽（年）。5 年一档：2010-2014 / 2015-2019……使同代不同季度聚合。 */
+    private const val TIME_BUCKET_SPAN: Int = 5
+
+    /**
+     * #9：时间标签 → **5 年桶**归一键（如 `2014年4月` / `2013年10月` → `2010-2014`）。
+     *
+     * 根因：`TIME_REGEX` 精确匹配到「年+季度/月」，`2014年4月` 与 `2015年10月` 成为两个不同的 TIME 键，
+     * 即便属同一时代也永不对齐，年代偏好被打散成一堆单例、无法聚合。按 [TIME_BUCKET_SPAN] 年分档后，
+     * 同一时代的作品共享同一键，才能形成「你偏爱 2010 年代前半的番」这类可累积的年代画像。
+     * 不含可解析年份的时间标签（如 `夏季`、`1月新番`）原样返回（仍属 TIME，但不参与年代分档）。
+     */
+    fun timeBucket(cleanedTag: String): String {
+        val year = YEAR_IN_TAG.find(cleanedTag)?.value?.toIntOrNull()
+            ?.takeIf { it in 1900..2099 } ?: return cleanedTag
+        val start = year - (year % TIME_BUCKET_SPAN)
+        return "$start-${start + TIME_BUCKET_SPAN - 1}"
+    }
+
     private fun isStudioTag(cleaned: String): Boolean = TasteTagTaxonomy.isStudio(cleaned)
 
     /** 厂牌标签是否与真实 staff 名集合相符（任一 staff 名包含厂牌串或反之）。 */

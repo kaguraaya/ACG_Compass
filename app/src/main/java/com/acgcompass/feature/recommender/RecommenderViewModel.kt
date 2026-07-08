@@ -203,12 +203,17 @@ class RecommenderViewModel @Inject constructor(
     }
 
     /**
-     * 统计候选池作品的真实社区标签作为「想看的标签」筛选项（频次降序，取前 [MAX_TAG_OPTIONS]）。
+     * 统计候选池作品的真实社区标签作为「想看的标签」筛选项（频次降序，取前 N）。
      * C 轮：仅保留**题材**标签（[TasteTagTaxonomy.isSelectableGenre] 白名单），剔除厂商/人物名/梗/
      * 声优/时间等噪声——用户只想按「战斗、奇幻」这类题材筛选；同时减少 chip 数量，缓解展开/下滑掉帧。
+     *
+     * 用户反馈：候选池选「全部作品」时可选标签偏少。按池区分上限——全部作品池题材天然更丰富，
+     * 放宽到 [ALL_WORKS_TAG_OPTIONS]；待补池维持精简 [MAX_TAG_OPTIONS]。仍按频次降序，使**主流热门**
+     * 标签（标注人数多、频次高）优先展示，且随候选池内容动态增减。
      */
-    private suspend fun computeAvailableTags(pool: CandidatePool): List<String> =
-        loadCandidates(pool)
+    private suspend fun computeAvailableTags(pool: CandidatePool): List<String> {
+        val limit = if (pool == CandidatePool.ALL_WORKS) ALL_WORKS_TAG_OPTIONS else MAX_TAG_OPTIONS
+        return loadCandidates(pool)
             .flatMap { w -> w.tags.map { it.name } }
             .map { TagNoise.clean(it) }
             .filter { TasteTagTaxonomy.isSelectableGenre(it) }
@@ -217,7 +222,8 @@ class RecommenderViewModel @Inject constructor(
             .entries
             .sortedByDescending { it.value }
             .map { it.key }
-            .take(MAX_TAG_OPTIONS)
+            .take(limit)
+    }
 
     /**
      * 标签感知 + 个性化推荐（两个候选池共用）。综合分 = **个人口味（主导）** + 所选标签命中加成 +
@@ -327,10 +333,12 @@ class RecommenderViewModel @Inject constructor(
                 mean
             }
             val communityNudge = (bayes?.div(10f) ?: 0.5f).coerceIn(0f, 1f)
-            // B：意图加成——用户选了标签即强当下意图，按「命中所选标签的覆盖率」soft-AND 加权（命中越全越高），
-            // 取代旧「命中数 × 0.6」（绝对计数无法区分 2/2 全中与 2/5 擦边）。未选标签时为 0，回到纯口味个性化。
+            // B：意图加成——用户选了标签即强当下意图，按「命中所选标签的覆盖率」soft-AND 加权。
+            // #6：覆盖率取**非线性（平方）**——全命中(2/2)仍满权 1.0，部分命中(1/2)被压到 0.25，
+            // 显著拉开「全中 vs 擦边」，让多选标签真正驱动排序而非命中 1 个即近似满足；未选标签时为 0。
             val intentBonus = if (tagSelected && selectedTags.isNotEmpty()) {
-                (hitSelected.toFloat() / selectedTags.size) * INTENT_COVERAGE_WEIGHT
+                val coverage = (hitSelected.toFloat() / selectedTags.size).coerceIn(0f, 1f)
+                coverage * coverage * INTENT_COVERAGE_WEIGHT
             } else {
                 0f
             }
@@ -339,12 +347,12 @@ class RecommenderViewModel @Inject constructor(
                 // 引擎匹配度 0–100 → 0~1 作为主导个人口味分量（已拉开差距）。
                 val frac = (engine.score / 100f).coerceIn(0f, 1f)
                 val combined = frac * 3f + intentBonus + communityNudge * 0.6f +
-                    (Math.random().toFloat() * 0.8f)
+                    (Math.random().toFloat() * INTENT_RANDOM_JITTER)
                 Scored(w, matchedSelected, hitSelected, engine.reasons.take(3).map { it.label }, frac, mean, combined, frac, true)
             } else {
                 val ts = personalTasteScorer.score(w, taste, bayes)
                 val combined = ts.personal * 3f + intentBonus + communityNudge * 0.6f +
-                    (Math.random().toFloat() * 0.8f)
+                    (Math.random().toFloat() * INTENT_RANDOM_JITTER)
                 Scored(
                     w, matchedSelected, hitSelected, ts.matchedHighTags.take(3), ts.personal, mean, combined,
                     tasteFraction = if (ts.available) ts.fraction else null,
@@ -370,9 +378,17 @@ class RecommenderViewModel @Inject constructor(
         // 从综合分 top 段随机抽取，制造多样性；抽中后再按综合分排序（稳妥档=其中最贴合的一部）。
         val poolSize = if (input.indecisionMode) 6 else 12
         val topPool = filtered.take(poolSize)
-        val picks = topPool.shuffled()
-            .take(if (input.indecisionMode) 1 else 3)
-            .sortedByDescending { it.combined }
+        val takeCount = if (input.indecisionMode) 1 else 3
+        // #6 补强：用户显式多选（≥2）标签 = 强意图——保证「命中所选标签最多」的一部必定入选且作为稳妥档
+        // 展示，避免它被 top 段随机抽样洗掉，导致「选了多个标签却没被尊重」。其余名额仍从池中随机抽取保多样性。
+        // 复合排序键：覆盖数（hitSelected）优先，其次综合分（combined），故稳妥档=最贴合当下意图的一部。
+        val picks = if (tagSelected && selectedTags.size > 1) {
+            val best = topPool.maxByOrNull { it.hitSelected * 1000f + it.combined } ?: topPool.first()
+            val rest = topPool.filter { it !== best }.shuffled().take((takeCount - 1).coerceAtLeast(0))
+            (listOf(best) + rest).sortedByDescending { it.hitSelected * 1000f + it.combined }
+        } else {
+            topPool.shuffled().take(takeCount).sortedByDescending { it.combined }
+        }
         if (picks.isEmpty()) return UiState.Empty(NO_CANDIDATE_CTA)
 
         recordExposure(picks.map { it.work })
@@ -498,14 +514,27 @@ class RecommenderViewModel @Inject constructor(
         /** K2：全部作品池融入评分时，先按口味取的候选规模（之后用本地缓存评分二次排序）。 */
         const val RATING_BLEND_POOL = 30
 
-        /** P2-5：动态标签筛选项最多展示个数（按频次取前 N，避免选项过多）。 */
+        /** P2-5：动态标签筛选项最多展示个数（按频次取前 N，避免选项过多）。待补池用此值（精简）。 */
         const val MAX_TAG_OPTIONS = 30
 
         /**
-         * B：意图覆盖率加成权重。用户主动选标签 = 强当下意图，按命中所选标签的覆盖率（0~1）× 此值加分，
-         * 全命中 +2.0（约等于口味 frac×3 的 0.67），实现 soft-AND「尽量多命中所选标签」而非命中 1 个即满足。
+         * 全部作品候选池的标签上限（用户反馈：全部作品池题材更丰富，标签偏少）。放宽到此值，
+         * 仍按频次降序保证主流热门优先；待补池维持 [MAX_TAG_OPTIONS] 精简。
          */
-        const val INTENT_COVERAGE_WEIGHT = 2.0f
+        const val ALL_WORKS_TAG_OPTIONS = 40
+
+        /**
+         * B/#6：意图覆盖率加成权重。用户主动选标签 = 强当下意图，按命中所选标签的**平方覆盖率**（0~1）× 此值加分。
+         * 全命中 +2.6（接近口味 frac×3 的最大 3.0），实现 soft-AND「尽量多命中所选标签」而非命中 1 个即满足；
+         * 平方覆盖率使部分命中（如 1/2→0.25）被显著压低，进一步拉开「全中 vs 擦边」。
+         */
+        const val INTENT_COVERAGE_WEIGHT = 2.6f
+
+        /**
+         * #6：推荐综合分的随机扰动幅度（保证多次提交结果不完全雷同）。从 0.8 降到 0.4——原值过大，
+         * 会盖过「全命中 vs 部分命中」的标签覆盖差异，导致用户感觉「选了多个标签也没被尊重」。
+         */
+        const val INTENT_RANDOM_JITTER = 0.4f
 
         /**
          * N4：今晚精排**不再**在提交热路径联网补齐 work_features（此前 24 次串行联网 → 每次提交都「转半天」）。

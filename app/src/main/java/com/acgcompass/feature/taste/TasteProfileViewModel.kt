@@ -10,6 +10,7 @@ import com.acgcompass.data.sync.BangumiSyncManager
 import com.acgcompass.data.taste.AiTagClassifier
 import com.acgcompass.data.taste.TagClassifyOutcome
 import com.acgcompass.data.taste.TagClassifyProgress
+import com.acgcompass.data.taste.TagDimensionSummary
 import com.acgcompass.data.taste.TasteEngine
 import com.acgcompass.data.taste.TasteRefreshProgress
 import com.acgcompass.domain.model.TasteProfile
@@ -60,6 +61,21 @@ class TasteProfileViewModel @Inject constructor(
 
     private val _classifying = MutableStateFlow(false)
     val classifying: StateFlow<Boolean> = _classifying.asStateFlow()
+
+    /**
+     * RC.20.2e：AI「升维」效果摘要（各精确维度已细化多少个原本兜底为「题材」的标签）。进入画像页与
+     * 每次分维分类完成后刷新；为空（未配置 / 未分类）时页面隐藏该区。
+     */
+    private val _dimensionSummary = MutableStateFlow<TagDimensionSummary?>(null)
+    val dimensionSummary: StateFlow<TagDimensionSummary?> = _dimensionSummary.asStateFlow()
+
+    /** RC.20.2e：刷新升维效果摘要（后台读缓存计数；失败静默保持原值）。 */
+    private fun refreshDimensionSummary() {
+        viewModelScope.launch {
+            runCatching { aiTagClassifier.dimensionSummary() }
+                .onSuccess { _dimensionSummary.value = it }
+        }
+    }
 
     val uiState: StateFlow<UiState<TasteProfile>> =
         repository.observeTasteProfile()
@@ -139,6 +155,8 @@ class TasteProfileViewModel @Inject constructor(
      * 收藏时，后台静默重算（联网补齐 work_features）。节流避免每次进入都联网；失败静默不打扰用户。
      */
     fun onScreenOpened() {
+        // RC.20.2e：进入页面即刷新升维摘要（不受下方联网重算节流影响），让已有 AI 分维缓存的效果立即展示。
+        refreshDimensionSummary()
         if (_importing.value) return
         val lastBuiltAt = tasteEngine.currentProfile?.generatedAt ?: 0L
         if (System.currentTimeMillis() - lastBuiltAt <= AUTO_REFRESH_INTERVAL_MS) return
@@ -185,6 +203,7 @@ class TasteProfileViewModel @Inject constructor(
                     is TagClassifyOutcome.Done ->
                         if (outcome.classified > 0) {
                             runCatching { tasteEngine.rebuildFromCache() }
+                            refreshDimensionSummary()
                             "已用 AI 分维分类 ${outcome.classified} 个标签"
                         } else {
                             // A1：AI 有返回但落库 0——多为模型未按要求输出维度 key；给出可操作提示而非笼统「未返回」。

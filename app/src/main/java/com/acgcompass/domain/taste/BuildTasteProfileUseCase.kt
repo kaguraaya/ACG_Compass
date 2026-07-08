@@ -55,6 +55,14 @@ class BuildTasteProfileUseCase @Inject constructor() {
             m[key] = (m[key] ?: 0.0) + delta
         }
 
+        // #11：每个(维度, 标签)出现在**多少部不同已评分作品**中的支持度计数——用于过滤低支持度的偶然负向标签。
+        val tagSupport = HashMap<TasteCategory, HashMap<String, Int>>()
+        fun countSupport(cat: TasteCategory, key: String) {
+            if (key.isBlank()) return
+            val m = tagSupport.getOrPut(cat) { HashMap() }
+            m[key] = (m[key] ?: 0) + 1
+        }
+
         // 组合挖掘累加器。
         val comboSupport = HashMap<Set<String>, Double>()
         val comboSigned = HashMap<Set<String>, Double>()
@@ -84,11 +92,16 @@ class BuildTasteProfileUseCase @Inject constructor() {
             if ((s.updatedAtMillis ?: 0L) > 0L) timeCovered++
 
             for ((cat, tagMap) in f.byCategory) {
-                for ((k, q) in tagMap) accumulate(cat, k, contribution * q)
+                for ((k, q) in tagMap) {
+                    accumulate(cat, k, contribution * q)
+                    // 该标签在本部作品出现 → 支持度 +1（每部至多计一次，tagMap 的 key 已在作品内去重）。
+                    countSupport(cat, k)
+                }
             }
             // 短评关键词 → COMMENT 维度（q=1）。
-            for (kw in CommentKeywords.extract(s.comment)) {
+            for (kw in CommentKeywords.extract(s.comment).toSet()) {
                 accumulate(TasteCategory.COMMENT, kw, contribution)
+                countSupport(TasteCategory.COMMENT, kw)
             }
 
             // 组合挖掘只看正向作品（pref>0）。
@@ -101,7 +114,7 @@ class BuildTasteProfileUseCase @Inject constructor() {
             }
         }
 
-        val categories = acc.mapValues { (_, m) -> toCategoryPreference(m) }
+        val categories = acc.mapValues { (cat, m) -> toCategoryPreference(m, tagSupport[cat]) }
             .filterValues { !it.isEmpty }
 
         val combos = comboSupport.entries.mapNotNull { (tags, support) ->
@@ -114,7 +127,7 @@ class BuildTasteProfileUseCase @Inject constructor() {
         }.sortedByDescending { it.strength }
 
         val coreProfile = AdvancedTasteProfile(categories = categories, combos = combos)
-        val calibration = calibrate(perSample, acc, categories, coreProfile, calibrationPool, tagOverrides)
+        val calibration = calibrate(perSample, acc, tagSupport, categories, coreProfile, calibrationPool, tagOverrides)
 
         val n = selected.size
         val coverage = TasteCoverage(
@@ -148,13 +161,27 @@ class BuildTasteProfileUseCase @Inject constructor() {
         return (forced + rest).distinctBy { it.subjectId }.take(TasteScoringParams.MAX_PROFILE_SAMPLES)
     }
 
-    private fun toCategoryPreference(merged: Map<String, Double>): CategoryPreference {
+    /**
+     * 把有符号累加的偏好 [merged] 拆成正 / 负向量。
+     *
+     * #11：负向量需通过**最小支持度**过滤——某标签只有在 ≥ [TasteScoringParams.MIN_NEGATIVE_SUPPORT] 部
+     * 已评分作品中出现，才允许进入负向量。这样滤除「只看过 1 部、评分略低于均分」的稀疏题材（如 百合 /
+     * 美食）被均分中心化偶然打成负、反而拉低匹配的问题；正向量不设门槛（正向偏爱不需要多部佐证也可信）。
+     * [support] 为 null（如无支持度信息）时不过滤，保持向后兼容。
+     */
+    private fun toCategoryPreference(
+        merged: Map<String, Double>,
+        support: Map<String, Int>? = null,
+    ): CategoryPreference {
         val positive = HashMap<String, Double>()
         val negative = HashMap<String, Double>()
         for ((k, v) in merged) {
             when {
                 v > 0.0 -> positive[k] = v
-                v < 0.0 -> negative[k] = -v
+                v < 0.0 -> {
+                    val supp = support?.get(k) ?: Int.MAX_VALUE
+                    if (supp >= TasteScoringParams.MIN_NEGATIVE_SUPPORT) negative[k] = -v
+                }
             }
         }
         return CategoryPreference(positive, negative)
@@ -196,6 +223,7 @@ class BuildTasteProfileUseCase @Inject constructor() {
     private fun calibrate(
         perSample: List<CalibSample>,
         acc: Map<TasteCategory, Map<String, Double>>,
+        tagSupport: Map<TasteCategory, Map<String, Int>>,
         baseCategories: Map<TasteCategory, CategoryPreference>,
         core: AdvancedTasteProfile,
         pool: List<WorkFeature>,
@@ -210,7 +238,7 @@ class BuildTasteProfileUseCase @Inject constructor() {
         val zs = when {
             usePool -> poolZs
             perSample.isNotEmpty() -> perSample.map { cs ->
-                TasteRawScorer.rawScore(cs.featurized, cs.feature, leaveOneOutProfile(cs, acc, baseCategories, core))
+                TasteRawScorer.rawScore(cs.featurized, cs.feature, leaveOneOutProfile(cs, acc, tagSupport, baseCategories, core))
             }
             else -> return TasteCalibration()
         }
@@ -231,6 +259,7 @@ class BuildTasteProfileUseCase @Inject constructor() {
     private fun leaveOneOutProfile(
         cs: CalibSample,
         acc: Map<TasteCategory, Map<String, Double>>,
+        tagSupport: Map<TasteCategory, Map<String, Int>>,
         baseCategories: Map<TasteCategory, CategoryPreference>,
         core: AdvancedTasteProfile,
     ): AdvancedTasteProfile {
@@ -243,7 +272,7 @@ class BuildTasteProfileUseCase @Inject constructor() {
                 val newVal = (looAccCat[k] ?: 0.0) - cs.contribution * q
                 if (abs(newVal) < 1e-12) looAccCat.remove(k) else looAccCat[k] = newVal
             }
-            val pref = toCategoryPreference(looAccCat)
+            val pref = toCategoryPreference(looAccCat, tagSupport[cat])
             if (pref.isEmpty) overridden.remove(cat) else overridden[cat] = pref
         }
         return core.copy(categories = overridden)

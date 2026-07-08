@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.items
@@ -203,6 +204,7 @@ fun BacklogScreen(
                         onToggleMediaTypeFilter = onToggleMediaTypeFilter,
                         onToggleDustMuseumFilter = onToggleDustMuseumFilter,
                         onClearFilters = onClearFilters,
+                        modifier = Modifier.padding(horizontal = 16.dp),
                     )
                     Column(
                         modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -227,10 +229,7 @@ fun BacklogScreen(
                     )
                 }
                 selectionMode -> {
-                    BulkActionBar(
-                        selectedCount = selectedIds.size,
-                        onBulk = onBulk,
-                    )
+                    // RC.20.3a：批量操作栏作为列表 header 随内容一起滚动（不再固定在顶部）。
                     BacklogList(
                         state = state,
                         selectionMode = selectionMode,
@@ -241,25 +240,16 @@ fun BacklogScreen(
                         onToggleSelect = onToggleSelect,
                         onOpenDetail = onOpenDetail,
                         modifier = Modifier.weight(1f),
+                        header = {
+                            BulkActionBar(
+                                selectedCount = selectedIds.size,
+                                onBulk = onBulk,
+                            )
+                        },
                     )
                 }
                 else -> {
-                    // R87：一键抽番移入内容区操作行，避免悬浮 FAB 遮挡卡片「查看详情」按钮。
-                    Button(
-                        onClick = onDraw,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                    ) { Text("一键抽番", maxLines = 1) }
-                    FilterCard(
-                        filter = filter,
-                        sort = sort,
-                        onSortSelected = onSortSelected,
-                        onTogglePriorityFilter = onTogglePriorityFilter,
-                        onToggleMediaTypeFilter = onToggleMediaTypeFilter,
-                        onToggleDustMuseumFilter = onToggleDustMuseumFilter,
-                        onClearFilters = onClearFilters,
-                    )
+                    // RC.20.3a：一键抽番按钮 + 筛选/排序卡作为列表 header 随内容一起滚动（不再固定在顶部）。
                     BacklogList(
                         state = state,
                         selectionMode = selectionMode,
@@ -270,6 +260,24 @@ fun BacklogScreen(
                         onToggleSelect = onToggleSelect,
                         onOpenDetail = onOpenDetail,
                         modifier = Modifier.weight(1f),
+                        header = {
+                            // R87：一键抽番移入内容区操作行，避免悬浮 FAB 遮挡卡片「查看详情」按钮。
+                            Button(
+                                onClick = onDraw,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 8.dp),
+                            ) { Text("一键抽番", maxLines = 1) }
+                            FilterCard(
+                                filter = filter,
+                                sort = sort,
+                                onSortSelected = onSortSelected,
+                                onTogglePriorityFilter = onTogglePriorityFilter,
+                                onToggleMediaTypeFilter = onToggleMediaTypeFilter,
+                                onToggleDustMuseumFilter = onToggleDustMuseumFilter,
+                                onClearFilters = onClearFilters,
+                            )
+                        },
                     )
                 }
             }
@@ -285,7 +293,11 @@ fun BacklogScreen(
     }
 }
 
-/** 列表区：渲染待补卡片（多选 / 普通模式共用）。H14：普通模式支持列表 / 网格切换。 */
+/**
+ * 列表区：渲染待补卡片（多选 / 普通模式共用）。H14：普通模式支持列表 / 网格切换。
+ * RC.20.3a：可选 [header] 作为 lazy 容器首个 item 随内容一起滚动（一键抽番 / 筛选排序 / 批量操作栏），
+ * 不再固定在页面顶部；网格模式下 header 占满整行。
+ */
 @Composable
 private fun BacklogList(
     state: UiState<List<BacklogCardItem>>,
@@ -297,31 +309,48 @@ private fun BacklogList(
     onOpenDetail: (String) -> Unit,
     gridMode: Boolean = false,
     modifier: Modifier = Modifier,
+    header: (@Composable () -> Unit)? = null,
 ) {
     StateScaffold(
         state = state,
         modifier = modifier.fillMaxSize(),
     ) { cards ->
-        if (gridMode && !selectionMode) {
+        if (gridMode) {
             // H14：网格排版——3 列，仅显示封面 + 标题，省空间。
+            // RC.20.3b：多选态保持网格（不再强制切列表）——BacklogGridItem 已支持多选勾选遮罩。
             LazyVerticalGrid(
                 columns = GridCells.Fixed(3),
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp),
+                // RC.20.3a：外沿 16dp、列间距 12dp；header 全行项也内缩 16dp（与卡片对齐）。
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                if (header != null) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Column(modifier = Modifier.fillMaxWidth()) { header() }
+                    }
+                }
                 gridItems(cards, key = { it.workId }) { card ->
-                    BacklogGridItem(card = card, onOpenDetail = onOpenDetail)
+                    BacklogGridItem(
+                        card = card,
+                        onOpenDetail = onOpenDetail,
+                        selectionMode = selectionMode,
+                        selected = card.workId in selectedIds,
+                        onToggleSelect = onToggleSelect,
+                    )
                 }
             }
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                // F1：底部 96dp 保证最后一张卡片不被底栏/手势条遮挡（顶层页可完整滚动到底）。
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 96.dp),
+                // RC.20.3a：外沿 16dp；底部 96dp 保证末项不被底栏/手势条遮挡。header 与卡片同宽对齐。
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                if (header != null) {
+                    item { Column(modifier = Modifier.fillMaxWidth()) { header() } }
+                }
                 items(cards, key = { it.workId }) { card ->
                     BacklogListItem(
                         card = card,
@@ -460,7 +489,7 @@ private fun BulkActionBar(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(vertical = 8.dp),
     ) {
         Column(
             modifier = Modifier
@@ -535,15 +564,16 @@ private fun FilterCard(
     onToggleMediaTypeFilter: (MediaType) -> Unit,
     onToggleDustMuseumFilter: (Boolean?) -> Unit,
     onClearFilters: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     var filtersExpanded by rememberSaveable { mutableStateOf(false) }
     val activeCount = filter.priorities.size + filter.mediaTypes.size +
         // P1-4：默认基线 inDustMuseum=false 不计入激活筛选数。
         (if (filter.inDustMuseum != false) 1 else 0)
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(vertical = 8.dp),
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             Row(

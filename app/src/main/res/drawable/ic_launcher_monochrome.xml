@@ -5,9 +5,10 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
     <!-- Android 13+ 主题图标：单色轮廓（系统按主题着色）。形状与前景一致：八芒星（大四芒 + 小四芒）。 -->
+    <!-- RC.20.7a：小四芒对齐彩色前景（放大到半跨 ~14.28），与 ic_launcher_foreground 同 pathData。 -->
     <path
         android:fillColor="#1F2A44"
-        android:pathData="M63,45 L59,54 L63,63 L54,59 L45,63 L49,54 L45,45 L54,49 Z" />
+        android:pathData="M68.3,39.7 L61.9,54 L68.3,68.3 L54,61.9 L39.7,68.3 L46.1,54 L39.7,39.7 L54,46.1 Z" />
     <path
         android:fillColor="#1F2A44"
         android:pathData="M54,24 L60,48 L84,54 L60,60 L54,84 L48,60 L24,54 L48,48 Z" />

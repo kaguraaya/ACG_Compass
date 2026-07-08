@@ -14,6 +14,7 @@ import com.acgcompass.domain.ai.CostRange
 import com.acgcompass.domain.model.AiGenerator
 import com.acgcompass.domain.model.AiResult
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -198,9 +199,9 @@ class AiEngineImpl @Inject constructor(
         rawContent: String,
         schema: JsonObject?,
     ): AiRunResult.Success<T>? {
-        val jsonText = extractJsonObjectText(rawContent)
+        val jsonText = extractJsonText(rawContent)
         val element = runCatching { json.parseToJsonElement(jsonText) }.getOrNull() ?: return null
-        val obj = element as? JsonObject ?: return null
+        val obj = coerceTopLevelToObject(element, schema, task.requiredFields) ?: return null
         if (!hasAllRequired(obj, task.requiredFields)) return null
 
         // 剧透过滤：净化所有字符串叶子（RC.14.04，支撑 Property 12）。
@@ -255,6 +256,44 @@ class AiEngineImpl @Inject constructor(
             value != null && value != JsonNull
         }
 
+    /**
+     * 顶层结构归一：把模型输出的顶层元素统一为 [JsonObject]。
+     *
+     * 部分 provider（实测 DeepSeek 在 `response_format=json_object` 下）会直接返回**顶层 JSON 数组**
+     * `[{...},{...}]`，而本项目所有结构化任务的目标类型都是「含单个数组字段的对象」（如 TagClassify 的
+     * `{"items":[...]}`）。若不桥接，数组会在 `as? JsonObject` 处被判失败 → 触发无效修复 → 低置信兜底 →
+     * 表面上「多次未返回合法结果」（issue #12）。此处按任务 schema 的数组属性名把裸数组包裹成对象，
+     * 使其能正常反序列化；对已是对象的正常响应零影响（幂等）。
+     */
+    private fun coerceTopLevelToObject(
+        element: JsonElement,
+        schema: JsonObject?,
+        requiredFields: List<String>,
+    ): JsonObject? {
+        (element as? JsonObject)?.let { return it }
+        val array = element as? JsonArray ?: return null
+        val field = arrayFieldName(schema, requiredFields) ?: return null
+        return JsonObject(mapOf(field to array))
+    }
+
+    /**
+     * 推断「裸数组应包裹进哪个字段」：优先取 schema 中唯一的 array 类型属性；多个时取其中的必需字段；
+     * 无 schema 时回退到唯一的必需字段。无法确定则返回 null（不猜测，交由上层判失败）。
+     */
+    private fun arrayFieldName(schema: JsonObject?, requiredFields: List<String>): String? {
+        val props = schema?.get("properties") as? JsonObject
+        if (props != null) {
+            val arrayProps = props.filter { (_, v) ->
+                ((v as? JsonObject)?.get("type") as? JsonPrimitive)?.content == "array"
+            }.keys
+            when {
+                arrayProps.size == 1 -> return arrayProps.first()
+                arrayProps.size > 1 -> arrayProps.firstOrNull { it in requiredFields }?.let { return it }
+            }
+        }
+        return requiredFields.singleOrNull()
+    }
+
     private fun extractConfidence(element: JsonElement): Float {
         val obj = element as? JsonObject ?: return 0f
         val raw = (obj["confidence"] as? JsonPrimitive)?.content
@@ -262,13 +301,23 @@ class AiEngineImpl @Inject constructor(
     }
 
     /**
-     * 从模型输出中抽取 JSON 对象文本：剥离 Markdown 代码围栏与前后说明，截取首个 `{` 到末个 `}`。
+     * 从模型输出中抽取最外层 JSON 文本：剥离 Markdown 代码围栏与前后说明。
+     *
+     * 同时支持对象 `{...}` 与数组 `[...]`：以「最先出现的开括号」判定外层容器类型，再截到对应的末个闭括号。
+     * 这样 DeepSeek 等返回的顶层数组 `[{...},{...}]` 能被完整截取（此前只找 `{`…`}` 会把数组砍成非法片段）。
      * 抽取失败时原样返回（后续解析会判定为非法 → 触发修复）。
      */
-    private fun extractJsonObjectText(raw: String): String {
-        val start = raw.indexOf('{')
-        val end = raw.lastIndexOf('}')
-        return if (start in 0 until end) raw.substring(start, end + 1) else raw
+    private fun extractJsonText(raw: String): String {
+        val firstObj = raw.indexOf('{')
+        val firstArr = raw.indexOf('[')
+        val useArray = firstArr >= 0 && (firstObj < 0 || firstArr < firstObj)
+        return if (useArray) {
+            val end = raw.lastIndexOf(']')
+            if (firstArr in 0 until end) raw.substring(firstArr, end + 1) else raw
+        } else {
+            val end = raw.lastIndexOf('}')
+            if (firstObj in 0 until end) raw.substring(firstObj, end + 1) else raw
+        }
     }
 
     private companion object {

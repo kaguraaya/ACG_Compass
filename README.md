@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="docs/icon.svg" alt="ACG Compass app icon" width="120" height="120">
+<img src="docs/icon.svg" alt="Hoshimi app icon" width="120" height="120">
 
-# ACG Compass · 多源 ACG 口味罗盘
+# Hoshimi · 多源 ACG 口味罗盘
 
 **跨源聚合 · 口味匹配 · 个性化推荐 · 无剧透 AI 评价**
 
@@ -13,9 +13,9 @@
 
 </div>
 
-多源 ACG（动画 / 游戏 / 视觉小说）发现与「口味匹配」Android 应用。聚合 Bangumi、AniList、Jikan(MyAnimeList)、VNDB 等数据源，跨源匹配同一作品，并基于用户长期口味提供个性化推荐与无剧透 AI 评价。
+**Hoshimi**（星見）是一款多源 ACG（动画 / 游戏 / 视觉小说）发现与「口味匹配」Android 应用。聚合 Bangumi、AniList、Jikan(MyAnimeList)、VNDB 等数据源，跨源匹配同一作品，并基于用户长期口味提供个性化推荐与无剧透 AI 评价。
 
-> **English** — A multi-source anime / visual-novel discovery app for Android. It aggregates Bangumi, AniList, Jikan (MyAnimeList) and VNDB, performs cross-source matching, and produces personalized, taste-aware recommendations with spoiler-free AI analysis. All credentials stay encrypted on-device; nothing is uploaded to any first-party server.
+> **English** — Hoshimi is a multi-source anime / visual-novel discovery app for Android. It aggregates Bangumi, AniList, Jikan (MyAnimeList) and VNDB, performs cross-source matching, and produces personalized, taste-aware recommendations with spoiler-free AI analysis. All credentials stay encrypted on-device; nothing is uploaded to any first-party server.
 
 ---
 

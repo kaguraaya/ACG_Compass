@@ -6,7 +6,7 @@ import com.acgcompass.data.local.dao.WorkFeatureDao
 import com.acgcompass.data.local.entity.WorkFeatureEntity
 import com.acgcompass.data.remote.bangumi.BangumiRemoteDataSource
 import com.acgcompass.data.remote.bangumi.BangumiSubjectDto
-import com.acgcompass.data.remote.bangumi.BangumiSubjectType
+import com.acgcompass.data.remote.bangumi.mapBangumiMediaType
 import com.acgcompass.domain.model.MediaType
 import com.acgcompass.domain.taste.TagCount
 import com.acgcompass.domain.taste.WorkFeature
@@ -175,7 +175,7 @@ class WorkFeatureRepositoryImpl @Inject constructor(
             eps = (eps ?: totalEpisodes ?: 0).coerceAtLeast(0),
             durationMin = 0,
             platform = platform?.takeIf { it.isNotBlank() },
-            mediaType = mediaTypeOf(type)?.name,
+            mediaType = mediaTypeOf(type).name,
             titles = listOfNotNull(
                 name.takeIf { it.isNotBlank() },
                 nameCn.takeIf { it.isNotBlank() },
@@ -205,12 +205,12 @@ class WorkFeatureRepositoryImpl @Inject constructor(
         )
     }
 
-    private fun mediaTypeOf(type: Int?): MediaType? = when (type) {
-        BangumiSubjectType.ANIME -> MediaType.ANIME
-        BangumiSubjectType.BOOK -> MediaType.MANGA
-        BangumiSubjectType.GAME -> MediaType.GAME
-        else -> null
-    }
+    /**
+     * #5：Bangumi type → [MediaType]，委托共享的 [mapBangumiMediaType]（音乐/真人/未知 → [MediaType.OTHER]）。
+     * 此前本地私有实现对音乐(3)/真人(6)返回 null，与主映射（→OTHER）口径分叉，是 OST 泄漏进
+     * ANIME 池的残留路径；委托后两处口径统一、永不再分叉。
+     */
+    private fun mediaTypeOf(type: Int?): MediaType = mapBangumiMediaType(type)
 
     /** 持久化用标签计数 DTO（避免给领域 [TagCount] 加序列化注解）。 */
     @Serializable

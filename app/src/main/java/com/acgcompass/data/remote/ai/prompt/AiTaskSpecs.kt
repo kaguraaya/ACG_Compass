@@ -160,7 +160,11 @@ object AiTaskSpecs {
         appendLine("- noise（噪声）：无区分度的媒介格式/放送状态/地区，或无意义标签，如 TV、剧场版、完结、日本。")
         appendLine("分类原则：优先判断是否属于 device/xp/character/staff/cv/source/time/meme/noise 这些更具体的维度；")
         appendLine("确实是内容题材才归 topic；无法判断或明显无信息量的归 noise，不要编造。")
-        appendLine("必须为输入里的每个标签各输出一条 {tag, dimension}，tag 原样回填。输出必须是符合目标 schema 的合法 JSON。")
+        appendLine("必须为输入里的每个标签各输出一条 {tag, dimension}，tag 原样回填。")
+        appendLine("输出格式（重要）：必须返回一个 **JSON 对象**，把所有分类结果放进顶层的 \"items\" 数组，")
+        appendLine("**不要**直接返回顶层数组。形如：")
+        appendLine("{\"items\":[{\"tag\":\"百合\",\"dimension\":\"topic\"},{\"tag\":\"神作\",\"dimension\":\"meme\"}],\"confidence\":0.9}")
+        appendLine("只输出该 JSON 对象本身，不要解释文字、不要 Markdown 代码块。")
         appendLine()
         append(SpoilerGuard.SYSTEM_PROMPT_RULES)
     }
