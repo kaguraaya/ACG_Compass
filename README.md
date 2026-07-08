@@ -22,6 +22,7 @@
 ## 目录
 
 - [功能特性](#功能特性)
+- [核心算法：口味匹配](#核心算法口味匹配)
 - [快速开始（用户）](#快速开始用户)
 - [运行环境](#environment)
 - [从源码构建（开发者）](#从源码构建开发者)
@@ -30,7 +31,7 @@
 - [技术栈](#tech-stack)
 - [隐私与安全](#隐私与安全)
 - [参与贡献](#参与贡献)
-- [致谢](#致谢)
+- [致谢与参考项目](#致谢与参考项目)
 - [许可证](#许可证)
 
 ---
@@ -45,6 +46,27 @@
 - **无剧透 AI 评价雷达 / 评论摘要** — 聚合社区评论，输出亮点 / 雷点 / 制作 / 节奏，全程剧透过滤。
 - **榜单与发现** — 公共榜单、跨平台评分差异、题材筛选。
 - **收藏与进度同步** — 与 Bangumi 收藏 / 观看状态双向同步。
+
+## 核心算法：口味匹配
+
+「口味匹配度」是 Hoshimi 的核心。它回答一个问题：**这部我还没看的作品，和我的长期口味有多契合？** 与「直接展示社区高分」不同，它以**你个人的评分历史**为主构建画像，社区口碑仅作辅助。整条管线为纯 Kotlin 领域逻辑，无 Android / IO 依赖，可离线单元测试与回归验证。
+
+**1. 十二维口味画像**
+从你评价过的作品中，按十二个维度提取正 / 负向偏好：题材、组合标签、XP（萌点）、载体、制作方、评论倾向、角色、原作来源、声优、年代、梗、社区共识。仅采用作品自身的社区标签，并过滤年份 / 媒介格式等噪声。评分经**均值中心化**（以你个人均分为中性点）——「略低于自己平均线」不等于「讨厌」，避免高均分用户的常看题材被误判为负向。高频通用标签按 **IDF 逆频降权**，稀有的、有区分度的标签获得更高话语权。
+
+**2. rawZ 融合与温度校准**
+候选作品在各维度上与画像做加权点积，得到原始契合度 `rawZ`；再经**温度化 logistic 校准**映射到 0–100 的匹配分。温度随样本量自适应（样本足够时用保序回归 isotonic，不足时回退 logistic 并设温度地板），保证冷启动不崩、样本充足时分数拉得开。
+
+**3. 评分锚定（已评分作品）**
+对你已经打过分的作品，以你的**显式评分**为主锚（如 10 分→稳定 90+、8 分→80+），长期画像仅做小幅修正，避免「小众挚爱与画像整体重合少」时被拉低。
+
+**4. 口味门控社区融合（RC.19）**
+纯内容 / 标签信号有天花板——对「品质 / 共识驱动 + 跨题材」型用户尤其明显（例：同一制作组的两部催泪番，你可能一部打 10、一部打 5，纯标签无从区分）。为此引入**口味门控**：当画像对某作**有明确立场**（匹配分远离中性 50）时，几乎完全由口味主导；仅当画像**没什么话说**（分数接近中性）时，才按社区口碑与其**票数置信度**补位。门控公式 `w_c = w_c^max · (1 − |p − 50| / 50)^γ · votesConf`，既补齐了口味无法判断的盲区，又保证强命中 / 强反口味不会被社区分带偏。
+
+**5. 离线验证（LOO）**
+用**留一交叉验证**（Leave-One-Out）在真实评分数据上度量预测分与真实评分的 **Spearman 排序相关**。门控融合上线后，真实数据集的 LOO Spearman 从基线 0.29 提升到 **0.54**（达到设计文档 ≥0.5 的目标），高 / 中 / 低分档的预测分呈健康单调分布。所有阈值与关系型断言由守卫测试固化，防止回归。
+
+> 设计原则：**可解释、不伪造、不过拟合**。每个匹配分都能追溯到具体维度的正负贡献；数据不足时显式标注低置信而非编造；门控设计确保社区分只在口味无法判断处起作用，避免退化成「社区高分复读机」。
 
 ## 快速开始（用户）
 
@@ -138,13 +160,31 @@ app/src/main/java/com/acgcompass/
 3. 提交前请确保 `./gradlew :app:compileDebugKotlin` 与单元测试通过。
 4. 发起 PR 并简要描述动机与改动点。
 
-## 致谢
+## 致谢与参考项目
 
-感谢以下数据源与开源项目（数据、商标归各自平台所有；本项目仅用于个人 / 学习用途）：
+数据、商标归各自平台所有；本项目仅用于个人 / 学习用途。
 
-- **数据源**：[Bangumi](https://bgm.tv/)、[AniList](https://anilist.co/)、[Jikan](https://jikan.moe/)（非官方 MyAnimeList API）、[MyAnimeList](https://myanimelist.net/) 官方 API、[VNDB](https://vndb.org/)。
-- **核心开源技术**：Jetpack Compose · Material 3 · Hilt · Room · Retrofit / OkHttp · kotlinx.serialization · Kotlin Coroutines / Flow。
-- **学习参考**：开发中参考了多个优秀的开源 Bangumi / 追番客户端（如 animeko、czy0729/Bangumi、xiaoyvyv/bangumi 等）的接口实现思路；其源码仅作本地研究、未包含在本仓库（见 `.gitignore`）。
+### 数据源
+
+[Bangumi](https://bgm.tv/) · [AniList](https://anilist.co/) · [Jikan](https://jikan.moe/)（非官方 MyAnimeList API）· [MyAnimeList](https://myanimelist.net/) 官方 API · [VNDB](https://vndb.org/)。
+
+### 核心开源技术
+
+Jetpack Compose · Material 3 · Hilt · Room · Retrofit / OkHttp · kotlinx.serialization · Kotlin Coroutines / Flow。
+
+### 学习参考的开源项目
+
+开发过程中研读了以下开源项目并借鉴其设计思路。**这些项目的源码仅在本地作研究用途，未包含在本仓库**（已在 `.gitignore` 中排除）；其著作权归各自作者所有，在此致谢。
+
+| 项目 | 类型 | 本项目主要借鉴点 |
+| --- | --- | --- |
+| [xiaoyvyv/bangumi](https://github.com/xiaoyvyv/bangumi) | Kotlin 安卓原生 Bangumi 客户端 | Bangumi 原生客户端结构、条目 / 搜索 / 收藏同步的页面信息架构 |
+| [animeko (Ani)](https://github.com/open-ani/animeko) | Kotlin / Compose Multiplatform 追番客户端 | 数据层 / Room 缓存 / Repository·UseCase 分层、榜单与 Compose 表现层架构 |
+| [czy0729/Bangumi](https://github.com/czy0729/Bangumi) | React Native Bangumi 客户端（页面覆盖完整） | 时光机、条目详情、排行 / 索引 / 每日放送等完整页面的功能设计 |
+| [MZZB Score](https://github.com/kisekinoumi/mzzbscore) | 多站动画评分聚合工具（Bangumi / MAL / AniList / Filmarks） | 跨源评分聚合、标准化与差异对比的数据流程 |
+| [Kotatsu](https://github.com/KotatsuApp/Kotatsu) | 开源 Android 漫画阅读器（Material 3） | 自适应桌面图标随系统明暗切换的实现思路、圆角胶囊搜索栏的设计语言 |
+
+> 借鉴均限于**公开的设计思路与接口用法**，Hoshimi 的代码为独立实现（Kotlin / Jetpack Compose）。若有作者认为引用不当，欢迎通过 Issue 联系修正。
 
 ## 许可证
 

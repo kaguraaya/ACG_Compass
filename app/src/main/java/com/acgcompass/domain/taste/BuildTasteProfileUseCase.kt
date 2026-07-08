@@ -36,6 +36,9 @@ class BuildTasteProfileUseCase @Inject constructor() {
         now: Long,
         calibrationPool: List<WorkFeature> = emptyList(),
         tagOverrides: Map<String, TasteCategory> = emptyMap(),
+        idfStrength: Double = TasteScoringParams.PROFILE_IDF_STRENGTH,
+        neutralBias: Double = TasteScoringParams.PREF_NEUTRAL_BIAS,
+        prefSlope: Double = TasteScoringParams.PREF_SLOPE,
     ): AdvancedTasteProfile {
         val rated = samples.filter { it.rating != null }
         if (rated.isEmpty()) {
@@ -44,8 +47,10 @@ class BuildTasteProfileUseCase @Inject constructor() {
 
         val selected = selectSamples(rated)
         val referenceTime = selected.maxOfOrNull { it.updatedAtMillis ?: 0L }?.takeIf { it > 0L } ?: now
-        // RC.17：评分偏好以用户均分为中性点（取全体已评分样本均分），修「看得多≠偏爱」导致的画像主导偏差。
+        // RC.17：评分偏好以用户均分为中性点；RC.19：中性点再下移 [neutralBias]（默认 <userMean），
+        // 修「均分偏高用户 6 分被当作 -0.35 强负、把自己平均线附近的作品打成反口味」的过度中心化。
         val userMean = rated.mapNotNull { it.rating }.average()
+        val neutral = userMean - neutralBias
 
         // 各大类 tag/name → 累加偏好值（正负混合，后续拆分）。
         val acc = HashMap<TasteCategory, HashMap<String, Double>>()
@@ -79,7 +84,7 @@ class BuildTasteProfileUseCase @Inject constructor() {
 
         for (s in selected) {
             val rating = s.rating ?: continue
-            val pref = TasteScoringParams.prefCentered(rating, userMean)
+            val pref = TasteScoringParams.prefCentered(rating, neutral, prefSlope)
             val ageDays = ageDaysOf(referenceTime, s.updatedAtMillis)
             val w = TasteScoringParams.sampleWeight(ageDays, rating, s.comment)
             val contribution = w * pref
@@ -114,7 +119,8 @@ class BuildTasteProfileUseCase @Inject constructor() {
             }
         }
 
-        val categories = acc.mapValues { (cat, m) -> toCategoryPreference(m, tagSupport[cat]) }
+        val nSelected = selected.size
+        val categories = acc.mapValues { (cat, m) -> toCategoryPreference(m, tagSupport[cat], nSelected, idfStrength) }
             .filterValues { !it.isEmpty }
 
         val combos = comboSupport.entries.mapNotNull { (tags, support) ->
@@ -127,7 +133,9 @@ class BuildTasteProfileUseCase @Inject constructor() {
         }.sortedByDescending { it.strength }
 
         val coreProfile = AdvancedTasteProfile(categories = categories, combos = combos)
-        val calibration = calibrate(perSample, acc, tagSupport, categories, coreProfile, calibrationPool, tagOverrides)
+        val calibration = calibrate(
+            perSample, acc, tagSupport, categories, coreProfile, calibrationPool, tagOverrides, nSelected, idfStrength,
+        )
 
         val n = selected.size
         val coverage = TasteCoverage(
@@ -172,12 +180,20 @@ class BuildTasteProfileUseCase @Inject constructor() {
     private fun toCategoryPreference(
         merged: Map<String, Double>,
         support: Map<String, Int>? = null,
+        sampleCount: Int = 0,
+        idfStrength: Double = 0.0,
     ): CategoryPreference {
         val positive = HashMap<String, Double>()
         val negative = HashMap<String, Double>()
         for ((k, v) in merged) {
             when {
-                v > 0.0 -> positive[k] = v
+                v > 0.0 -> {
+                    // RC.19：正向标签按 IDF 逆频降权高频通用标签（df=该标签出现在多少部已评分作品）。
+                    // df 缺失时按 1（当作独特标签，不降权）；idfStrength=0 时 factor 恒 1（回退旧行为）。
+                    val df = support?.get(k) ?: 1
+                    val idf = TasteScoringParams.idfFactor(df, sampleCount, idfStrength)
+                    positive[k] = v * idf
+                }
                 v < 0.0 -> {
                     val supp = support?.get(k) ?: Int.MAX_VALUE
                     if (supp >= TasteScoringParams.MIN_NEGATIVE_SUPPORT) negative[k] = -v
@@ -228,6 +244,8 @@ class BuildTasteProfileUseCase @Inject constructor() {
         core: AdvancedTasteProfile,
         pool: List<WorkFeature>,
         tagOverrides: Map<String, TasteCategory> = emptyMap(),
+        sampleCount: Int = 0,
+        idfStrength: Double = 0.0,
     ): TasteCalibration {
         val poolZs = if (pool.size >= CALIB_MIN_POOL) {
             pool.mapNotNull { f -> runCatching { TasteRawScorer.rawScore(f, core, tagOverrides) }.getOrNull() }
@@ -238,7 +256,10 @@ class BuildTasteProfileUseCase @Inject constructor() {
         val zs = when {
             usePool -> poolZs
             perSample.isNotEmpty() -> perSample.map { cs ->
-                TasteRawScorer.rawScore(cs.featurized, cs.feature, leaveOneOutProfile(cs, acc, tagSupport, baseCategories, core))
+                TasteRawScorer.rawScore(
+                    cs.featurized, cs.feature,
+                    leaveOneOutProfile(cs, acc, tagSupport, baseCategories, core, sampleCount, idfStrength),
+                )
             }
             else -> return TasteCalibration()
         }
@@ -262,6 +283,8 @@ class BuildTasteProfileUseCase @Inject constructor() {
         tagSupport: Map<TasteCategory, Map<String, Int>>,
         baseCategories: Map<TasteCategory, CategoryPreference>,
         core: AdvancedTasteProfile,
+        sampleCount: Int = 0,
+        idfStrength: Double = 0.0,
     ): AdvancedTasteProfile {
         if (cs.contribution == 0.0) return core
         val overridden = HashMap(baseCategories)
@@ -272,7 +295,7 @@ class BuildTasteProfileUseCase @Inject constructor() {
                 val newVal = (looAccCat[k] ?: 0.0) - cs.contribution * q
                 if (abs(newVal) < 1e-12) looAccCat.remove(k) else looAccCat[k] = newVal
             }
-            val pref = toCategoryPreference(looAccCat, tagSupport[cat])
+            val pref = toCategoryPreference(looAccCat, tagSupport[cat], sampleCount, idfStrength)
             if (pref.isEmpty) overridden.remove(cat) else overridden[cat] = pref
         }
         return core.copy(categories = overridden)

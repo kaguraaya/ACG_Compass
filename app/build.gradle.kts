@@ -25,8 +25,8 @@ android {
         applicationId = "com.acgcompass"
         minSdk = 26
         targetSdk = 34
-        versionCode = 20
-        versionName = "0.17.1"
+        versionCode = 21
+        versionName = "0.18.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

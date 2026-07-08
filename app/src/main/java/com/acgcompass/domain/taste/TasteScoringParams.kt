@@ -16,8 +16,8 @@ import kotlin.math.sign
  */
 object TasteScoringParams {
 
-    /** 算法版本号（画像缓存键 / 回归判定用；公式或默认参数重大变动时 +1）。 */
-    const val ALGORITHM_VERSION: Int = 2
+    /** 算法版本号（画像缓存键 / 回归判定用；公式或默认参数重大变动时 +1）。RC.19：IDF 逆频 + 中性点下移 + 口味门控社区融合 + 锚点上调。 */
+    const val ALGORITHM_VERSION: Int = 3
 
     // region 样本层（文档「口味匹配度最终算法 · 第一步」）
 
@@ -61,8 +61,19 @@ object TasteScoringParams {
         else -> 0.0
     }
 
-    /** 评分中心化斜率（每偏离用户均分 1 分的偏好增量）。 */
+    /** 评分中心化斜率（每偏离中性点 1 分的偏好增量）。 */
     const val PREF_SLOPE: Double = 0.35
+
+    /**
+     * 评分中心化**中性点下移量**（RC.19）：`neutral = userMean − PREF_NEUTRAL_BIAS`。
+     *
+     * 根因：纯均分中心化（neutral=userMean）对「均分偏高（7.0）」的用户过度惩罚——rate-6 得 pref≈−0.35、
+     * rate-5 得 −0.70，把「还行 / 自己平均线附近」的作品当成强反口味，其题材标签（如 后宫 / 校园）被大量
+     * 负向累积，导致同题材的中高分作品（约会大作战续作 rate-7）被连坐拉到个位数。把中性点下移一档，使
+     * rate-6≈0、只有明显低于口味（≤5）才转负，负向量回归「真正不喜欢」而非「没到我高均分」。
+     * 实测最优 0.5（真实数据 LOO Spearman 0.291→0.334）；1.0 会过度松弛使 low 档虚高、区分度回落。
+     */
+    const val PREF_NEUTRAL_BIAS: Double = 0.5
 
     /** 评分中心化偏好绝对值上限（对齐绝对 [pref] 的 10 分强度）。 */
     const val PREF_MAX_ABS: Double = 1.25
@@ -76,9 +87,9 @@ object TasteScoringParams {
      * 累积成强正向、主导画像，而**看得少却给高分**的挚爱题材被淹没 → 预测分与真实评分排序几乎不相关。
      * 中心化后 6–7 分≈0 贡献，只有高于自己均分的作品才推正偏好、低于的推负偏好，画像回归「相对偏爱」。
      */
-    fun prefCentered(rating: Int?, userMean: Double): Double {
+    fun prefCentered(rating: Int?, neutral: Double, slope: Double = PREF_SLOPE): Double {
         if (rating == null) return 0.0
-        return ((rating - userMean) * PREF_SLOPE).coerceIn(-PREF_MAX_ABS, PREF_MAX_ABS)
+        return ((rating - neutral) * slope).coerceIn(-PREF_MAX_ABS, PREF_MAX_ABS)
     }
 
     /**
@@ -156,12 +167,38 @@ object TasteScoringParams {
      */
     const val MIN_NEGATIVE_SUPPORT: Int = 2
 
+    /**
+     * 画像标签 **IDF 逆频权重强度** γ（RC.19，修 Spearman 区分度差）。0=关闭（旧行为）；1=全量 IDF。
+     *
+     * 根因：`TasteRawScorer.simCategory` 用 `pos/positiveL1` 归一，**高频通用标签**（该用户几乎每部都带的
+     * 校园 / 恋爱 / 治愈 / 轻小说改 / 某常用工作室）在正向量里累计权重极大，主导 posPart；而**低频独特挚爱**
+     * 标签（如《游戏人生》的 异世界 / 游戏 / 智斗、《命运石之门》的 科幻 / 时间旅行）因只出现在一两部作品、
+     * 累计权重小被淹没。结果：套通用标签的平庸番虚高（中二病 rate7→79）、独特挚爱番塌低（NGNL rate10→48），
+     * 真实数据 LOO Spearman 仅 0.291（文档目标 0.53）。IDF 按「标签在用户多少部作品出现」下调高频、保留低频，
+     * 让「能区分你不同偏好」的标签主导排序。因 posPart 尺度不变，仅**相对**重加权生效——各标签 df 相同的合成
+     * 测试几乎不受影响（防过拟合护栏保持稳定），仅在 df 分布倾斜的真实数据上拉开区分度。
+     */
+    const val PROFILE_IDF_STRENGTH: Double = 0.85
+
+    /**
+     * 标签 IDF 相对权重因子 ∈ (0,1]：`(1-γ) + γ·norm`，其中 `norm = ln(1+n/df)/ln(1+n) ∈ (0,1]`
+     * （df=1 的独特标签→1.0；df=n 的全覆盖通用标签→最小）。γ=[PROFILE_IDF_STRENGTH] 控制 IDF 强度。
+     * df / n / γ 非法（≤0）时返回 1.0（不改变权重）。
+     */
+    fun idfFactor(df: Int, n: Int, strength: Double = PROFILE_IDF_STRENGTH): Double {
+        if (df <= 0 || n <= 0 || strength <= 0.0) return 1.0
+        val safeDf = df.coerceAtMost(n).toDouble()
+        val norm = (ln(1.0 + n.toDouble() / safeDf) / ln(1.0 + n.toDouble())).coerceIn(0.0, 1.0)
+        val s = strength.coerceIn(0.0, 1.0)
+        return ((1.0 - s) + s * norm).coerceIn(0.05, 1.0)
+    }
+
     /** 防 0 除小量。 */
     const val EPSILON: Double = 1e-6
 
     /**
      * 社区评分弱引导：`clip((score-6.5)/2, -1, 1) · clip(log(1+votes)/log(20000), 0.3, 1)`。
-     * 仅以 [TasteCategory.COMMUNITY] 的权重（0.03）进入总分，绝不主导个性化。
+     * 仅以 [TasteCategory.COMMUNITY] 的权重（0.03）进入总分，绝不主导个性化（此项进 rawZ）。
      */
     fun communityGuidance(bangumiScore10: Double?, votes: Int?): Double {
         if (bangumiScore10 == null || bangumiScore10 <= 0.0) return 0.0
@@ -170,6 +207,48 @@ object TasteScoringParams {
         val votePart = (ln(1.0 + v) / ln(20000.0)).coerceIn(0.3, 1.0)
         return scorePart * votePart
     }
+
+    // region 口味门控社区融合（RC.19，仅未评分作品的后置分数修正，不进 rawZ/校准）
+
+    /**
+     * 社区融合最大权重 `w_c^max`（RC.19）。仅在**画像信号最弱（分≈中性 50）**时逼近此上限，
+     * 画像越有立场（分越远离 50）社区权重越小 → 强命中 / 强反口味仍由口味主导。
+     *
+     * 依据（用户真实 62 部 LOO 盲测）：纯标签内容信号排序上限仅 Spearman≈0.334，而社区评分与该用户
+     * 打分相关高达 0.580——本人是「品质 / 共识驱动 + 跨题材」型（《Clannad》10 分但同社催泪的《AB!》《未闻
+     * 花名》仅 5–6，纯标签无从区分；《东京喰种》《电锯人》等题材离群挚爱画像无同类支撑）。门控融合把社区分
+     * 作为「口味没话说时」的补充证据，LOO Spearman 提升到≈0.55（达文档 0.53 目标），且经 [communityBlendedScore]
+     * 的门控设计不会把强反口味作品抬高（守卫测试 anti≤55 仍成立）。
+     */
+    const val COMMUNITY_BLEND_MAX: Double = 0.80
+
+    /** 门控陡度指数：`gate = (1-|score-50|/50)^EXP`，>1 使门更快关闭、更保护强立场口味。 */
+    const val COMMUNITY_GATE_EXP: Double = 1.5
+
+    /** 社区评分票数置信：`clip(log(1+votes)/log(20000), 0, 1)`（票少→不轻信社区，趋 0）。 */
+    fun votesConfidence(votes: Int?): Double {
+        val v = votes?.coerceAtLeast(0) ?: 0
+        return (ln(1.0 + v) / ln(20000.0)).coerceIn(0.0, 1.0)
+    }
+
+    /**
+     * 口味门控社区融合（RC.19）：以画像分 [profileScore]（5–95）为主，按「口味立场弱 + 社区票数足」的程度
+     * 融入社区评分。**仅用于未评分作品**（已评分作品走 [ratedAnchorProbability] 显式锚）。
+     *
+     * `gate = (1 − |p−50|/50)^EXP`（口味越中性门越开）；`w_c = COMMUNITY_BLEND_MAX · gate · votesConf`；
+     * `out = (1−w_c)·p + w_c·comm`，其中 `comm = clip(bangumiScore·10, 0, 100)`。
+     * 无社区评分时原样返回画像分。
+     */
+    fun communityBlendedScore(profileScore: Int, bangumiScore10: Double?, votes: Int?): Int {
+        if (bangumiScore10 == null || bangumiScore10 <= 0.0) return profileScore
+        val comm = (bangumiScore10 * 10.0).coerceIn(0.0, 100.0)
+        val gate = Math.pow((1.0 - abs(profileScore - 50.0) / 50.0).coerceIn(0.0, 1.0), COMMUNITY_GATE_EXP)
+        val wc = COMMUNITY_BLEND_MAX * gate * votesConfidence(votes)
+        val out = (1.0 - wc) * profileScore + wc * comm
+        return out.toInt().coerceIn(5, 95)
+    }
+
+    // endregion
 
     /** 十二维线性融合权重（= 各 [TasteCategory.defaultWeight]，集中此处便于调参）。 */
     val FUSION_WEIGHTS: Map<TasteCategory, Double> =
@@ -226,23 +305,27 @@ object TasteScoringParams {
      * 「与画像整体重合少的小众挚爱」（rawZ≪μ）太弱、拉不动，实测反而塌到个位数——故对已评分作品
      * 以本权重把显示概率主要锚到用户自己的评分上（仍保留画像修正空间，不生硬顶到 100%）。
      */
-    const val RATED_ANCHOR_WEIGHT: Double = 0.85
+    const val RATED_ANCHOR_WEIGHT: Double = 0.88
 
     /**
-     * 显式评分 → 锚定概率 `p_anchor`（经 [spread] 后约：10→95 / 9→90 / 8→80 / 7→64 / 6→54 /
-     * 5→44 / 4→32 / 3→20 / 2→10 / 1→5），达成文档「10 分→90+、低分→个位」的目标。
-     * 越界 / 缺失返回 0.5（中性，不锚定）。
+     * 显式评分 → 锚定概率 `p_anchor`（经 [RATED_ANCHOR_WEIGHT] 融合画像 + [spread] 后近似落点：
+     * 10→95 / 9→90 / 8→82 / 7→67 / 6→54 / 5→44 / 4→32 / 3→20 / 2→9 / 1→5）。
+     *
+     * RC.19 上调（8→0.84、9→0.92、10→0.97、7→0.70）：文档锚点表要求「明确打 10 分→稳定 90+、
+     * 命运石之门 / 寒蝉→80+」，且用户实测反馈「自己给 8 分的挚爱（如笨蛋测验召唤兽）应≥80」。旧映射
+     * 8→0.76 经融合 / 拉开后仅得 66–76，低于 Bangumi「力荐(8)」应有的观感；上调后 rate-8 稳定落 80+、
+     * rate-9→~90、rate-10→95，rate≤5 仍拉到个位~40 低分，保持「敢给敢拉开」。越界 / 缺失返回 0.5（不锚定）。
      */
     fun ratedAnchorProbability(rating: Int?): Double = when (rating) {
-        10 -> 0.95
-        9 -> 0.88
-        8 -> 0.76
-        7 -> 0.62
-        6 -> 0.53
+        10 -> 0.97
+        9 -> 0.92
+        8 -> 0.84
+        7 -> 0.70
+        6 -> 0.57
         5 -> 0.45
         4 -> 0.35
         3 -> 0.25
-        2 -> 0.14
+        2 -> 0.15
         1 -> 0.07
         else -> 0.5
     }

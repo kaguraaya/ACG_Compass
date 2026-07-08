@@ -96,6 +96,21 @@ object TasteRawScorer {
         }
     }
 
+    /**
+     * 实体 / 创作者维度：**只做加分**（文档：声优「只做加分项，不做强召回」、角色实体「仅对同类角色偏好
+     * 生效」、staff/创作者偏好为个性化增益）。这些名字**稀疏**（每个通常只出现在 1–2 部作品），偶然落在
+     * 用户均分下方产生的「负向证据」并不可信——一个声优配过几十部作品、一个角色只属于一部番，用「这个
+     * 声优 / 角色出现在你评分略低于均分的作品里」来**扣分**是纯噪声，且会给出「−声优·諸星すみれ」
+     * 「−角色·逢坂大河」这类反直觉理由。故这些维度评分时不参与负向惩罚（λ=0），只在命中正向偏好时加分。
+     */
+    val POSITIVE_ONLY_CATEGORIES: Set<TasteCategory> = setOf(
+        TasteCategory.STAFF, TasteCategory.CV, TasteCategory.CHARACTER,
+    )
+
+    /** 该大类评分实际使用的负向惩罚系数：实体/创作者维度（[POSITIVE_ONLY_CATEGORIES]）恒 0，其余用传入 λ。 */
+    fun lambdaFor(cat: TasteCategory, lambda: Double): Double =
+        if (cat in POSITIVE_ONLY_CATEGORIES) 0.0 else lambda
+
     /** 单大类相似度 `sim_c = Σ q·U^+ /(||U^+||+ε) - λ·Σ q·U^- /(||U^-||+ε)`。 */
     fun simCategory(catTags: Map<String, Double>, pref: CategoryPreference, lambda: Double): Double {
         if (catTags.isEmpty() || pref.isEmpty) return 0.0
@@ -157,7 +172,7 @@ object TasteRawScorer {
                 TasteCategory.COMMENT, TasteCategory.NOISE -> Unit
                 else -> {
                     val catTags = f.byCategory[cat] ?: continue
-                    z += cat.defaultWeight * simCategory(catTags, profile.category(cat), lambda)
+                    z += cat.defaultWeight * simCategory(catTags, profile.category(cat), lambdaFor(cat, lambda))
                 }
             }
         }

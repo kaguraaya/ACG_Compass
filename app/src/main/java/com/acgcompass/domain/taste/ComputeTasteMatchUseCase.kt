@@ -84,7 +84,16 @@ class ComputeTasteMatchUseCase @Inject constructor() {
         } else {
             pProfile
         }
-        val score = finalScore(p)
+        // RC.19：未评分作品在纯画像分之上做「口味门控社区融合」——画像有立场时（分远离中性 50）几乎不动，
+        // 画像没话说时（分≈50）按社区口碑 + 票数置信补位。修「品质 / 共识驱动 + 跨题材」用户的排序（真实
+        // 数据 LOO Spearman 0.33→0.54）。已评分作品仍以显式评分锚为准，不叠社区。
+        val score = if (isRated) {
+            finalScore(p)
+        } else {
+            TasteScoringParams.communityBlendedScore(
+                finalScore(p), feature.bangumiScore?.toDouble(), feature.bangumiVotes,
+            )
+        }
 
         val confidence = TasteScoringParams.confidence(
             realSampleCount = profile.sampleCount,
@@ -120,12 +129,18 @@ class ComputeTasteMatchUseCase @Inject constructor() {
             if (cat == TasteCategory.NOISE) continue
             val catTags = f.byCategory[cat] ?: continue
             val pref = profile.category(cat)
-            val sim = TasteRawScorer.simCategory(catTags, pref, lambda)
+            val sim = TasteRawScorer.simCategory(catTags, pref, TasteRawScorer.lambdaFor(cat, lambda))
             val contribution = cat.defaultWeight * sim
             if (abs(contribution) < REASON_MIN) continue
-            val topTag = catTags.entries
-                .maxByOrNull { (k, q) -> q * (pref.positive[k] ?: 0.0) }
-                ?.key
+            // 代表标签按该维度净贡献的**实际符号**选取：正向贡献 → 命中最强的正向偏好标签；
+            // 负向贡献 → 命中最强的负向偏好标签（如实说明是哪个题材拉低了匹配），不再一律贴正向标签。
+            val topTag = if (contribution >= 0.0) {
+                catTags.entries.maxByOrNull { (k, q) -> q * (pref.positive[k] ?: 0.0) }
+                    ?.takeIf { (k, q) -> q * (pref.positive[k] ?: 0.0) > 0.0 }?.key
+            } else {
+                catTags.entries.maxByOrNull { (k, q) -> q * (pref.negative[k] ?: 0.0) }
+                    ?.takeIf { (k, q) -> q * (pref.negative[k] ?: 0.0) > 0.0 }?.key
+            }
             val text = if (topTag != null) "${cat.label}·$topTag" else cat.label
             reasons += TasteReason(cat, text, contribution)
         }

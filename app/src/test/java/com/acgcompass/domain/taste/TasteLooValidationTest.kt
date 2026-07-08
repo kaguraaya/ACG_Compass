@@ -128,7 +128,7 @@ class TasteLooValidationTest : StringSpec({
         val bandOrder = listOf("低档(<=5)", "中档(6-7)", "高档(8-10)")
 
         val sb = StringBuilder()
-        sb.appendLine("=== RC.16 LOO 真实数据盲测报告 ===")
+        sb.appendLine("=== RC.19 LOO 真实数据盲测报告 ===")
         sb.appendLine("样本数(rated>0): $n")
         sb.appendLine("Spearman 排序相关(预测分 vs 真实评分): ${"%.3f".format(spearman)}")
         sb.appendLine()

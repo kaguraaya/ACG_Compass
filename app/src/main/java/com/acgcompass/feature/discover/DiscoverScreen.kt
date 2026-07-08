@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -35,12 +36,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -388,7 +390,14 @@ private fun SearchSection(
     }
 }
 
-/** 搜索框（RC.05.01）：单行输入，支持清除；提交关键词由 ViewModel 防抖后触发搜索；IME 搜索键记录历史（#10）。 */
+/**
+ * 搜索框（RC.05.01）：单行输入，支持清除；提交关键词由 ViewModel 防抖后触发搜索；IME 搜索键记录历史（#10）。
+ *
+ * I3（RC.35）：由 [OutlinedTextField]（方角描边、偏「表单录入」观感）改为 **Material 3 全圆角 pill 填充式**
+ * 搜索框——搜索是「查询」而非「表单填写」，M3 规范与参考项目 Kotatsu 的搜索栏（圆角 100dp 胶囊）均采用圆角
+ * 填充容器。用 [TextField] + `surfaceVariant` 填充 + [CircleShape] 实现，视觉更贴近搜索、与列表卡片风格更协调；
+ * 隐藏 TextField 的底部指示线（`indicatorColor = Transparent`）以呈现纯净胶囊。行为（输入/清除/IME 搜索键）不变。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SearchBar(
@@ -396,13 +405,15 @@ private fun SearchBar(
     onQueryChange: (String) -> Unit,
     onSearchSubmit: () -> Unit,
 ) {
-    OutlinedTextField(
+    TextField(
         value = query,
         onValueChange = onQueryChange,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = ScreenContentPadding.Horizontal, vertical = 8.dp)
+            .clip(CircleShape),
         singleLine = true,
+        shape = CircleShape,
         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
         trailingIcon = {
             if (query.isNotEmpty()) {
@@ -412,6 +423,13 @@ private fun SearchBar(
             }
         },
         placeholder = { Text("搜索作品名（中 / 日 / 罗马音 / 别名）", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        colors = TextFieldDefaults.colors(
+            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+            focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+            unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+            disabledIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+        ),
         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
             imeAction = ImeAction.Search,
         ),
