@@ -117,22 +117,23 @@ fun AppNavHost(
         navController = navController,
         startDestination = AppDestination.Home.route,
         modifier = modifier,
-        // 页面切换动画（RC.38 调整：去掉渐隐渐显，直接播放滑动，更自然，参考 Kotatsu）：
-        // - 顶层五栏之间：无方向语义，用【瞬切】无过渡——既符合「直接播放」诉求，也避免 fade 的透明合成层
-        //   与首页长列表快速滚动叠加导致的掉帧（顶层同级切换本无需动画）。
-        // - 进入嵌套下钻页（详情 / 推荐器 / 设置等）：新页从右侧整屏滑入，旧页轻微左移做视差；返回反向。
-        //   纯位移、无 alpha 渐变，干净利落。
+        // 页面切换动画（RC.39 修复：此前旧页仅位移 it/4、新页整屏位移 it，两者不对称——数学上任意时刻
+        // 视口内会有最高达 75% 屏宽的区域同时渲染新旧两页，在番剧卡片密集的列表页尤为明显的「重叠」显示 bug。
+        // 现改为对称整屏滑动：新旧页任意时刻在屏幕上首尾相接、零重叠区域，不依赖合成层 z-order，
+        // 这是原生 push 转场（含 Kotatsu）的标准做法，从根本上排除重叠可能）：
+        // - 顶层五栏之间：无方向语义，用【瞬切】无过渡（同时避免 fade 透明合成层叠加长列表滚动导致的掉帧）。
+        // - 进入嵌套下钻页（详情 / 推荐器 / 设置等）：新旧页整屏对称滑动，纯位移、无 alpha 渐变。
         enterTransition = {
             if (targetState.isTopLevel()) EnterTransition.None
             else slideInHorizontally(tween(NAV_SLIDE_MS)) { it }
         },
         exitTransition = {
             if (targetState.isTopLevel()) ExitTransition.None
-            else slideOutHorizontally(tween(NAV_SLIDE_MS)) { -it / 4 }
+            else slideOutHorizontally(tween(NAV_SLIDE_MS)) { -it }
         },
         popEnterTransition = {
             if (targetState.isTopLevel()) EnterTransition.None
-            else slideInHorizontally(tween(NAV_SLIDE_MS)) { -it / 4 }
+            else slideInHorizontally(tween(NAV_SLIDE_MS)) { -it }
         },
         popExitTransition = {
             if (initialState.isTopLevel()) ExitTransition.None
