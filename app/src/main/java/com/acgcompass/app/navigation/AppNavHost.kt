@@ -123,20 +123,26 @@ fun AppNavHost(
         // 这是原生 push 转场（含 Kotatsu）的标准做法，从根本上排除重叠可能）：
         // - 顶层五栏之间：无方向语义，用【瞬切】无过渡（同时避免 fade 透明合成层叠加长列表滚动导致的掉帧）。
         // - 进入嵌套下钻页（详情 / 推荐器 / 设置等）：新旧页整屏对称滑动，纯位移、无 alpha 渐变。
+        //
+        // RC.40 修复：「瞬切」只应在两端都是顶层五栏（真正的底部 Tab 切换）时生效。此前四个 transition 各自
+        // 只单侧检查 targetState 或 initialState 是否顶层，导致「详情(嵌套)→首页(顶层)」返回时：
+        // popEnterTransition 见 targetState=首页顶层 → 误判瞬切，返回页无动画瞬间出现；而 popExitTransition
+        // 见 initialState=详情非顶层 → 仍播放滑出动画——两侧判断标准不一致，退回页提前静止显示、退出页还在滑，
+        // 造成重叠。现改为「两端都顶层才瞬切」，只要有一端是嵌套页（无论进入还是返回）都对称滑动。
         enterTransition = {
-            if (targetState.isTopLevel()) EnterTransition.None
+            if (initialState.isTopLevel() && targetState.isTopLevel()) EnterTransition.None
             else slideInHorizontally(tween(NAV_SLIDE_MS)) { it }
         },
         exitTransition = {
-            if (targetState.isTopLevel()) ExitTransition.None
+            if (initialState.isTopLevel() && targetState.isTopLevel()) ExitTransition.None
             else slideOutHorizontally(tween(NAV_SLIDE_MS)) { -it }
         },
         popEnterTransition = {
-            if (targetState.isTopLevel()) EnterTransition.None
+            if (initialState.isTopLevel() && targetState.isTopLevel()) EnterTransition.None
             else slideInHorizontally(tween(NAV_SLIDE_MS)) { -it }
         },
         popExitTransition = {
-            if (initialState.isTopLevel()) ExitTransition.None
+            if (initialState.isTopLevel() && targetState.isTopLevel()) ExitTransition.None
             else slideOutHorizontally(tween(NAV_SLIDE_MS)) { it }
         },
     ) {
