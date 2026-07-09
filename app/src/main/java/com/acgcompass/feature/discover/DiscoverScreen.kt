@@ -6,8 +6,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -67,6 +65,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.geometry.CornerRadius
@@ -223,11 +223,11 @@ fun DiscoverScreen(
         modifier = modifier.fillMaxSize(),
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         topBar = {
-            // 展开态隐藏顶栏（快速折叠 + 淡出），给搜索与历史让出整块纵向空间。
+            // 展开态隐藏顶栏（RC.38：纯纵向折叠、无 fade），给搜索与历史让出整块纵向空间。
             AnimatedVisibility(
                 visible = !searchExpanded,
-                enter = expandVertically(tween(SEARCH_EXPAND_MS)) + fadeIn(tween(SEARCH_EXPAND_MS)),
-                exit = shrinkVertically(tween(SEARCH_EXPAND_MS)) + fadeOut(tween(SEARCH_EXPAND_MS)),
+                enter = expandVertically(tween(SEARCH_EXPAND_MS)),
+                exit = shrinkVertically(tween(SEARCH_EXPAND_MS)),
             ) {
                 AcgTopLevelTopBar(
                     title = "发现",
@@ -244,26 +244,25 @@ fun DiscoverScreen(
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
-            // 展开态隐藏 TabRow（同样快速折叠），使搜索框真正吸顶。
+            // 展开态隐藏 TabRow（RC.38：纯纵向折叠、无 fade），使搜索框真正吸顶。
             AnimatedVisibility(
                 visible = !searchExpanded,
-                enter = expandVertically(tween(SEARCH_EXPAND_MS)) + fadeIn(tween(SEARCH_EXPAND_MS)),
-                exit = shrinkVertically(tween(SEARCH_EXPAND_MS)) + fadeOut(tween(SEARCH_EXPAND_MS)),
+                enter = expandVertically(tween(SEARCH_EXPAND_MS)),
+                exit = shrinkVertically(tween(SEARCH_EXPAND_MS)),
             ) {
                 DiscoverTabRow(selected = tab, onTabSelect = onTabSelect)
             }
 
-            // 分区切换动画：按 Tab 序号方向做快速横滑 + 淡入淡出（220ms）。
-            // 序号增大（如 搜索→榜单）内容自右侧滑入、旧内容向左滑出；序号减小则反向——与顶部 Tab 的左右位置一致，符合直觉。
+            // 分区切换动画（RC.38：去掉淡入淡出，纯整屏横滑，更自然，参考 Kotatsu / ViewPager）：
+            // 序号增大（如 搜索→榜单）新内容自右整屏滑入、旧内容整屏向左滑出；序号减小则反向——与顶部 Tab
+            // 左右位置一致，符合直觉。整屏位移（dir*w）而非小位移，避免去 fade 后新旧内容重叠显脏。
             AnimatedContent(
                 targetState = tab,
                 transitionSpec = {
                     val forward = targetState.ordinal > initialState.ordinal
                     val dir = if (forward) 1 else -1
-                    (slideInHorizontally(tween(TAB_ANIM_MS)) { w -> dir * w / 5 } + fadeIn(tween(TAB_ANIM_MS)))
-                        .togetherWith(
-                            slideOutHorizontally(tween(TAB_ANIM_MS)) { w -> -dir * w / 5 } + fadeOut(tween(TAB_ANIM_MS)),
-                        )
+                    slideInHorizontally(tween(TAB_ANIM_MS)) { w -> dir * w }
+                        .togetherWith(slideOutHorizontally(tween(TAB_ANIM_MS)) { w -> -dir * w })
                 },
                 label = "discoverTab",
             ) { current ->
@@ -402,8 +401,9 @@ private fun SearchSection(
         SearchBar(
             query = query,
             expanded = expanded,
+            onExpand = { onExpandedChange(true) },
+            onCollapse = { onExpandedChange(false) },
             onQueryChange = onQueryChange,
-            onFocusChanged = { focused -> if (focused) onExpandedChange(true) },
             onSearchSubmit = {
                 onSearchSubmit()
                 onExpandedChange(false)
@@ -482,11 +482,23 @@ private fun SearchSection(
 private fun SearchBar(
     query: String,
     expanded: Boolean,
+    onExpand: () -> Unit,
+    onCollapse: () -> Unit,
     onQueryChange: (String) -> Unit,
-    onFocusChanged: (Boolean) -> Unit,
     onSearchSubmit: () -> Unit,
 ) {
+    val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
+    // I4（RC.36 / RC.38 修复）：以 [expanded] 为唯一真相源，用 FocusRequester 主动同步焦点——
+    // 展开即请求焦点（弹出输入光标），收起即清焦点（消除残留闪烁光标）。这样无论从返回箭头 / 系统返回手势 /
+    // IME 搜索 / 点历史 哪条路径收起，焦点都随之清除；再次点击空框获得焦点时又能触发 [onExpand] 重新展开。
+    LaunchedEffect(expanded) {
+        if (expanded) {
+            runCatching { focusRequester.requestFocus() }
+        } else {
+            focusManager.clearFocus(force = true)
+        }
+    }
     // I4（RC.36）：展开态横向内边距收窄（16dp→6dp），搜索框随之「变宽」占满整行，配合顶栏 / TabRow 收起呈现吸顶展开。
     // 用 animateDpAsState 让变宽平滑（快速、200ms），非生硬跳变。
     val horizontalPadding by animateDpAsState(
@@ -501,13 +513,15 @@ private fun SearchBar(
             .fillMaxWidth()
             .padding(horizontal = horizontalPadding, vertical = 8.dp)
             .clip(CircleShape)
-            .onFocusChanged { onFocusChanged(it.isFocused) },
+            .focusRequester(focusRequester)
+            // 仅负责「聚焦 → 展开」；收起统一由 [onCollapse] 驱动并清焦点，避免焦点抖动导致状态错乱。
+            .onFocusChanged { if (it.isFocused && !expanded) onExpand() },
         singleLine = true,
         shape = CircleShape,
         leadingIcon = {
-            // 展开态左侧换成返回箭头，点击收起并清焦点（回到常态）；常态为搜索放大镜。
+            // 展开态左侧换成返回箭头，点击即收起（[onCollapse] 会同时清焦点、恢复顶栏）；常态为搜索放大镜。
             if (expanded) {
-                IconButton(onClick = { focusManager.clearFocus() }) {
+                IconButton(onClick = onCollapse) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "收起搜索")
                 }
             } else {
@@ -533,10 +547,8 @@ private fun SearchBar(
             imeAction = ImeAction.Search,
         ),
         keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-            onSearch = {
-                onSearchSubmit()
-                focusManager.clearFocus()
-            },
+            // 提交搜索即收起（[onCollapse] 清焦点 + 恢复顶栏），看结果。
+            onSearch = { onSearchSubmit() },
         ),
     )
 }

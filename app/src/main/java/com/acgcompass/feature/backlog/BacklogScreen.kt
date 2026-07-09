@@ -1,5 +1,6 @@
 package com.acgcompass.feature.backlog
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -152,6 +153,8 @@ fun BacklogScreen(
     onOpenDustMuseum: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    // RC.38：多选态下拦截系统返回（手势 / 按键）——先退出多选并清空已选，而非直接退回首页，符合原生多选交互直觉。
+    BackHandler(enabled = selectionMode) { onToggleSelectionMode() }
     val isEmpty = state is UiState.Empty ||
         (state is UiState.Success && state.data.isEmpty())
     val hasActiveFilter = filter.priorities.isNotEmpty() ||

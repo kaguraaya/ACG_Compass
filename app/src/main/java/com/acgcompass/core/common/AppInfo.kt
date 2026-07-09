@@ -15,8 +15,8 @@ object AppInfo {
     /** 作者 / 维护者（GitHub 用户名，真实值，非占位符）。 */
     const val AUTHOR: String = "kaguraaya"
 
-    /** 项目 GitHub 仓库地址（真实值，非占位符）。这是全应用**唯一**的仓库地址来源。 */
-    const val REPO_URL: String = "https://github.com/kaguraaya/ACG_Compass"
+    /** 项目 GitHub 仓库地址（真实值，非占位符）。这是全应用**唯一**的仓库地址来源（RC.20.9b：随应用名更名为 Hoshimi）。 */
+    const val REPO_URL: String = "https://github.com/kaguraaya/Hoshimi"
 
     /**
      * 合规 User-Agent 的联系/项目入口标识（Bangumi 等要求 UA 携带可追溯的项目入口）。

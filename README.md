@@ -92,8 +92,8 @@
 
 ```bash
 # 克隆
-git clone https://github.com/kaguraaya/ACG_Compass.git
-cd ACG_Compass
+git clone https://github.com/kaguraaya/Hoshimi.git
+cd Hoshimi
 
 # 构建 Debug APK
 ./gradlew assembleDebug          # Windows: .\gradlew.bat assembleDebug
