@@ -366,10 +366,17 @@ class DetailViewModel @Inject constructor(
     private fun loadRatings() {
         if (workId.isBlank()) return
         viewModelScope.launch {
-            // 评分拉取失败不影响作品展示：失败时退回空聚合（四平台均「暂无数据」、共识低置信）。
-            ratings.value = when (val result = workRepository.aggregateRatings(workId)) {
-                is AppResult.Success -> result.data
-                is AppResult.Failure -> RatingAggregate()
+            // RC.37「缓存优先加载」：点入详情时评分聚合走网络刷新，若等待请求会让评分区长时间「暂无数据」。
+            // 故先立即读本地已缓存评分（不联网）铺上首帧——有缓存则秒显，随后网络刷新到手再原地更新数值。
+            // 因 ratings 是 StateFlow、UI 为响应式重组，更新只改变化的数值，不会重建列表 / 改变滚动位置（无页面重载）。
+            val cached = runCatching { workRepository.aggregateRatingsCached(workId) }.getOrNull()
+            if (cached != null) ratings.value = cached
+
+            // 联网刷新（内部刷新各源评分并写回 Room 后聚合）：成功则用最新值原地更新；
+            // 失败时【保留已显示的缓存值】而非清空——避免「先显示又变没」，也不覆盖有效缓存（R3 韧性）。
+            when (val result = workRepository.aggregateRatings(workId)) {
+                is AppResult.Success -> ratings.value = result.data
+                is AppResult.Failure -> if (cached == null) ratings.value = RatingAggregate()
             }
             // N4：评分聚合内部会做跨源交叉验证并落 Bangumi 源链接；待其完成后再加载雷达与角色/评论，
             // 这样非 Bangumi 主源但能匹配到 Bangumi 的作品也能取到真实短评与角色资料。

@@ -1,5 +1,17 @@
 package com.acgcompass.feature.discover
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -25,6 +37,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
@@ -54,6 +67,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -75,6 +90,12 @@ import com.acgcompass.core.ui.AcgTopLevelTopBar
 import com.acgcompass.core.ui.ScreenContentPadding
 import com.acgcompass.core.ui.StateScaffold
 import com.acgcompass.core.ui.UiState
+
+/** 发现页分区（Tab）横滑切换动画时长（ms）：快速、有方向感、不拖沓。 */
+private const val TAB_ANIM_MS = 220
+
+/** 搜索框聚焦「就地展开 / 收起」动画时长（ms）：顶栏 / TabRow 折叠与搜索框变宽同步，快速利落。 */
+private const val SEARCH_EXPAND_MS = 200
 
 /**
  * 发现 / 搜索页路由入口（RC.05.01/02/03）。连接 [DiscoverViewModel] 并把状态与导航回调下发给
@@ -189,17 +210,33 @@ fun DiscoverScreen(
     onClearFilter: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // I4（RC.36）：搜索聚焦「就地展开」态。为 true 时（仅搜索 Tab）隐藏顶栏与 TabRow，
+    // 搜索框上移吸顶并占满整行、下方铺开历史 / 最近浏览——参考 Kotatsu 的 SearchView 展开行为，
+    // 但不采用全屏覆盖（那会遮住底部导航、使其他 Tab 入口突兀消失），改为不破坏页面逻辑的就地展开。
+    var searchExpanded by remember { mutableStateOf(false) }
+    // 切走搜索 Tab 时自动收起展开态，避免其他 Tab 顶栏被隐藏。
+    LaunchedEffect(tab) { if (tab != DiscoverTab.SEARCH) searchExpanded = false }
+    // 展开时拦截返回键：先收起搜索态，而非直接退出页面。
+    BackHandler(enabled = searchExpanded) { searchExpanded = false }
+
     Scaffold(
         modifier = modifier.fillMaxSize(),
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         topBar = {
-            AcgTopLevelTopBar(
-                title = "发现",
-                actions = {
-                    // C：探索队列入口——指南针图标（与 Hoshimi App 图标 / 开屏一致的四芒星指针罗盘）。
-                    ExploreQueueCompassAction(onClick = onOpenExploreQueue)
-                },
-            )
+            // 展开态隐藏顶栏（快速折叠 + 淡出），给搜索与历史让出整块纵向空间。
+            AnimatedVisibility(
+                visible = !searchExpanded,
+                enter = expandVertically(tween(SEARCH_EXPAND_MS)) + fadeIn(tween(SEARCH_EXPAND_MS)),
+                exit = shrinkVertically(tween(SEARCH_EXPAND_MS)) + fadeOut(tween(SEARCH_EXPAND_MS)),
+            ) {
+                AcgTopLevelTopBar(
+                    title = "发现",
+                    actions = {
+                        // C：探索队列入口——指南针图标（与 Hoshimi App 图标 / 开屏一致的四芒星指针罗盘）。
+                        ExploreQueueCompassAction(onClick = onOpenExploreQueue)
+                    },
+                )
+            }
         },
     ) { innerPadding ->
         Column(
@@ -207,55 +244,79 @@ fun DiscoverScreen(
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
-            DiscoverTabRow(selected = tab, onTabSelect = onTabSelect)
+            // 展开态隐藏 TabRow（同样快速折叠），使搜索框真正吸顶。
+            AnimatedVisibility(
+                visible = !searchExpanded,
+                enter = expandVertically(tween(SEARCH_EXPAND_MS)) + fadeIn(tween(SEARCH_EXPAND_MS)),
+                exit = shrinkVertically(tween(SEARCH_EXPAND_MS)) + fadeOut(tween(SEARCH_EXPAND_MS)),
+            ) {
+                DiscoverTabRow(selected = tab, onTabSelect = onTabSelect)
+            }
 
-            when (tab) {
-                DiscoverTab.SEARCH -> SearchSection(
-                    state = state,
-                    query = query,
-                    searchHistory = searchHistory,
-                    recentlyViewed = recentlyViewed,
-                    onQueryChange = onQueryChange,
-                    onSearchSubmit = onSearchSubmit,
-                    onSelectHistory = onSelectHistory,
-                    onRemoveHistory = onRemoveHistory,
-                    onClearHistory = onClearHistory,
-                    onRetry = onRetry,
-                    onOpenWork = onOpenWork,
-                    onOverrideMatch = onOverrideMatch,
-                )
+            // 分区切换动画：按 Tab 序号方向做快速横滑 + 淡入淡出（220ms）。
+            // 序号增大（如 搜索→榜单）内容自右侧滑入、旧内容向左滑出；序号减小则反向——与顶部 Tab 的左右位置一致，符合直觉。
+            AnimatedContent(
+                targetState = tab,
+                transitionSpec = {
+                    val forward = targetState.ordinal > initialState.ordinal
+                    val dir = if (forward) 1 else -1
+                    (slideInHorizontally(tween(TAB_ANIM_MS)) { w -> dir * w / 5 } + fadeIn(tween(TAB_ANIM_MS)))
+                        .togetherWith(
+                            slideOutHorizontally(tween(TAB_ANIM_MS)) { w -> -dir * w / 5 } + fadeOut(tween(TAB_ANIM_MS)),
+                        )
+                },
+                label = "discoverTab",
+            ) { current ->
+                when (current) {
+                    DiscoverTab.SEARCH -> SearchSection(
+                        state = state,
+                        query = query,
+                        searchHistory = searchHistory,
+                        recentlyViewed = recentlyViewed,
+                        expanded = searchExpanded,
+                        onExpandedChange = { searchExpanded = it },
+                        onQueryChange = onQueryChange,
+                        onSearchSubmit = onSearchSubmit,
+                        onSelectHistory = onSelectHistory,
+                        onRemoveHistory = onRemoveHistory,
+                        onClearHistory = onClearHistory,
+                        onRetry = onRetry,
+                        onOpenWork = onOpenWork,
+                        onOverrideMatch = onOverrideMatch,
+                    )
 
-                DiscoverTab.RANKING -> RankingSection(
-                    boards = rankingBoards,
-                    poolLoading = poolLoading,
-                    poolError = poolError,
-                    rankingScope = rankingScope,
-                    scopedRanking = scopedRanking,
-                    rankingLoadingMore = rankingLoadingMore,
-                    rankingCanLoadMore = rankingCanLoadMore,
-                    onSelectRankingScope = onSelectRankingScope,
-                    onRetryRanking = onRetryRanking,
-                    onLoadMoreRanking = onLoadMoreRanking,
-                    onLoadPool = onLoadPool,
-                    onOpenWork = onOpenWork,
-                )
+                    DiscoverTab.RANKING -> RankingSection(
+                        boards = rankingBoards,
+                        poolLoading = poolLoading,
+                        poolError = poolError,
+                        rankingScope = rankingScope,
+                        scopedRanking = scopedRanking,
+                        rankingLoadingMore = rankingLoadingMore,
+                        rankingCanLoadMore = rankingCanLoadMore,
+                        onSelectRankingScope = onSelectRankingScope,
+                        onRetryRanking = onRetryRanking,
+                        onLoadMoreRanking = onLoadMoreRanking,
+                        onLoadPool = onLoadPool,
+                        onOpenWork = onOpenWork,
+                    )
 
-                DiscoverTab.SCORE_DIFF -> ScoreDiffSection(
-                    items = scoreDiffItems,
-                    poolLoading = poolLoading,
-                    poolError = poolError,
-                    onLoadPool = onLoadPool,
-                    onOpenWork = onOpenWork,
-                )
+                    DiscoverTab.SCORE_DIFF -> ScoreDiffSection(
+                        items = scoreDiffItems,
+                        poolLoading = poolLoading,
+                        poolError = poolError,
+                        onLoadPool = onLoadPool,
+                        onOpenWork = onOpenWork,
+                    )
 
-                DiscoverTab.FILTER -> FilterSection(
-                    filter = filter,
-                    facets = filterFacets,
-                    results = filteredCards,
-                    onFilterChange = onFilterChange,
-                    onClearFilter = onClearFilter,
-                    onOpenWork = onOpenWork,
-                )
+                    DiscoverTab.FILTER -> FilterSection(
+                        filter = filter,
+                        facets = filterFacets,
+                        results = filteredCards,
+                        onFilterChange = onFilterChange,
+                        onClearFilter = onClearFilter,
+                        onOpenWork = onOpenWork,
+                    )
+                }
             }
         }
     }
@@ -316,13 +377,18 @@ private fun DiscoverTabRow(
     }
 }
 
-/** 搜索分区（RC.05.01/02/03，任务 21.1 行为保持不变）。 */
+/**
+ * 搜索分区（RC.05.01/02/03）。I4（RC.36）：新增聚焦「就地展开」——搜索框获得焦点即上抬 [onExpandedChange]，
+ * 由 [DiscoverScreen] 隐藏顶栏 / TabRow 让搜索框吸顶、下方铺开历史与最近浏览；提交搜索或点历史后收起。
+ */
 @Composable
 private fun SearchSection(
     state: UiState<List<DiscoverResultItem>>,
     query: String,
     searchHistory: List<String>,
     recentlyViewed: List<RankedWork>,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
     onQueryChange: (String) -> Unit,
     onSearchSubmit: () -> Unit,
     onSelectHistory: (String) -> Unit,
@@ -333,7 +399,16 @@ private fun SearchSection(
     onOverrideMatch: (String, com.acgcompass.domain.model.SourceRef) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
-        SearchBar(query = query, onQueryChange = onQueryChange, onSearchSubmit = onSearchSubmit)
+        SearchBar(
+            query = query,
+            expanded = expanded,
+            onQueryChange = onQueryChange,
+            onFocusChanged = { focused -> if (focused) onExpandedChange(true) },
+            onSearchSubmit = {
+                onSearchSubmit()
+                onExpandedChange(false)
+            },
+        )
 
         // D7/#10：查询为空 → 展示「最近浏览」作品（上次点开的条目）+ 「历史搜索」；否则照常渲染搜索状态。
         if (query.isBlank() && (recentlyViewed.isNotEmpty() || searchHistory.isNotEmpty())) {
@@ -363,7 +438,11 @@ private fun SearchSection(
                     item {
                         SearchHistorySection(
                             history = searchHistory,
-                            onSelectHistory = onSelectHistory,
+                            // 点历史项即执行搜索并收起展开态（回到带顶栏 / TabRow 的常态看结果）。
+                            onSelectHistory = { item ->
+                                onSelectHistory(item)
+                                onExpandedChange(false)
+                            },
                             onRemoveHistory = onRemoveHistory,
                             onClearHistory = onClearHistory,
                         )
@@ -402,19 +481,39 @@ private fun SearchSection(
 @Composable
 private fun SearchBar(
     query: String,
+    expanded: Boolean,
     onQueryChange: (String) -> Unit,
+    onFocusChanged: (Boolean) -> Unit,
     onSearchSubmit: () -> Unit,
 ) {
+    val focusManager = LocalFocusManager.current
+    // I4（RC.36）：展开态横向内边距收窄（16dp→6dp），搜索框随之「变宽」占满整行，配合顶栏 / TabRow 收起呈现吸顶展开。
+    // 用 animateDpAsState 让变宽平滑（快速、200ms），非生硬跳变。
+    val horizontalPadding by animateDpAsState(
+        targetValue = if (expanded) 6.dp else ScreenContentPadding.Horizontal,
+        animationSpec = tween(SEARCH_EXPAND_MS),
+        label = "searchBarPadding",
+    )
     TextField(
         value = query,
         onValueChange = onQueryChange,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = ScreenContentPadding.Horizontal, vertical = 8.dp)
-            .clip(CircleShape),
+            .padding(horizontal = horizontalPadding, vertical = 8.dp)
+            .clip(CircleShape)
+            .onFocusChanged { onFocusChanged(it.isFocused) },
         singleLine = true,
         shape = CircleShape,
-        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+        leadingIcon = {
+            // 展开态左侧换成返回箭头，点击收起并清焦点（回到常态）；常态为搜索放大镜。
+            if (expanded) {
+                IconButton(onClick = { focusManager.clearFocus() }) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "收起搜索")
+                }
+            } else {
+                Icon(Icons.Filled.Search, contentDescription = null)
+            }
+        },
         trailingIcon = {
             if (query.isNotEmpty()) {
                 IconButton(onClick = { onQueryChange("") }) {
@@ -434,7 +533,10 @@ private fun SearchBar(
             imeAction = ImeAction.Search,
         ),
         keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-            onSearch = { onSearchSubmit() },
+            onSearch = {
+                onSearchSubmit()
+                focusManager.clearFocus()
+            },
         ),
     )
 }

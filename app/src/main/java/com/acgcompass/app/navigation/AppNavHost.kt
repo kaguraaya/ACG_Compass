@@ -13,8 +13,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -113,11 +117,25 @@ fun AppNavHost(
         navController = navController,
         startDestination = AppDestination.Home.route,
         modifier = modifier,
-        // 去除页面切换的渐隐动画（用户反馈拖沓）：即时切换，无过渡。
-        enterTransition = { EnterTransition.None },
-        exitTransition = { ExitTransition.None },
-        popEnterTransition = { EnterTransition.None },
-        popExitTransition = { ExitTransition.None },
+        // 页面切换动画（快速美观优先，此前用户反馈默认 300ms+ 渐隐「拖沓」，故一度改为无过渡）：
+        // - 顶层五栏之间：无方向语义，用短时快速淡入淡出（130ms），够快不拖沓又比生硬瞬切有质感。
+        // - 进入嵌套下钻页（详情 / 推荐器 / 设置等）：从右侧轻滑入 + 淡入；返回反向——符合「进入下一层」直觉。
+        enterTransition = {
+            if (targetState.isTopLevel()) fadeIn(tween(NAV_FADE_MS))
+            else slideInHorizontally(tween(NAV_SLIDE_MS)) { it / 6 } + fadeIn(tween(NAV_SLIDE_MS))
+        },
+        exitTransition = {
+            if (targetState.isTopLevel()) fadeOut(tween(NAV_FADE_MS))
+            else fadeOut(tween(NAV_SLIDE_MS))
+        },
+        popEnterTransition = {
+            if (targetState.isTopLevel()) fadeIn(tween(NAV_FADE_MS))
+            else fadeIn(tween(NAV_SLIDE_MS))
+        },
+        popExitTransition = {
+            if (initialState.isTopLevel()) fadeOut(tween(NAV_FADE_MS))
+            else slideOutHorizontally(tween(NAV_SLIDE_MS)) { it / 6 } + fadeOut(tween(NAV_SLIDE_MS))
+        },
     ) {
         // region 底部五栏
         composable(AppDestination.Home.route) {
@@ -356,3 +374,13 @@ private fun NavHostController.navigateToTopLevel(tab: TopLevelDestination) {
         launchSingleTop = true
     }
 }
+
+/** 顶层五栏切换的淡入淡出时长（ms）：短促、快速、不拖沓，兼顾原生质感。 */
+private const val NAV_FADE_MS = 130
+
+/** 下钻页（详情等）滑入 / 滑出时长（ms）：略长于淡入以承载位移，但仍克制不拖沓。 */
+private const val NAV_SLIDE_MS = 220
+
+/** 该目的地是否为底部五栏之一（顶层）。用于区分「同级切换（淡入）」与「下钻（滑入）」动画。 */
+private fun NavBackStackEntry.isTopLevel(): Boolean =
+    TopLevelDestination.isTopLevelRoute(destination.route)
