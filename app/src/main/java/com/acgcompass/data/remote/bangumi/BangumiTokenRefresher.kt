@@ -24,13 +24,17 @@ class BangumiTokenRefresher @Inject constructor(
     private val credentialStore: CredentialStore,
 ) {
 
-    /** 按需续期：无 refresh_token / 仍在有效期内则直接返回；best-effort，任何异常静默吞掉。 */
+    /** 按需续期：无 refresh_token / 仍很新则直接返回；best-effort，任何异常静默吞掉。 */
     suspend fun refreshIfNeeded() {
         val secret = runCatching { credentialStore.get(SourceId.BANGUMI) }.getOrNull() ?: return
         val refreshToken = secret.refreshToken?.takeIf { it.isNotBlank() } ?: return
         val expiresAt = secret.tokenExpiresAt
         val now = System.currentTimeMillis()
-        // 未知过期时刻一律尝试续期；否则仅在剩余寿命不足阈值时提前续期。
+        // RC.40：纯客户端「打开即续期」模型下，Bangumi OAuth access token 固定 7 天、无法申请更长时长，
+        // 只能靠 refresh_token 在用户打开应用时续期。为把有效期窗口拉到最长——只要 token 已超过约 1 天
+        // （剩余 < REFRESH_THRESHOLD_MS）就在本次打开续期，使每次打开近乎必续、每天最多续一次（当天再开时
+        // token 已刷新回 7 天、剩余 > 阈值即跳过）。如此只要用户在任意 7 天窗口内打开过一次，token 就不过期。
+        // 未知过期时刻一律尝试续期。
         if (expiresAt != null && expiresAt - now > REFRESH_THRESHOLD_MS) return
 
         val result = oauthClient.refreshToken(refreshToken)
@@ -48,7 +52,11 @@ class BangumiTokenRefresher @Inject constructor(
     }
 
     private companion object {
-        /** 剩余寿命少于 2 天则提前续期（Bangumi access token 默认 7 天）。 */
-        const val REFRESH_THRESHOLD_MS: Long = 2L * 24 * 60 * 60 * 1000
+        /**
+         * 剩余寿命少于 6 天即续期（Bangumi access token 默认 7 天）。取 6 天而非贴近过期，是为了「每次打开
+         * 近乎必续」：token 老过约 1 天后的当天首次打开就续回 7 天，最大化「靠打开续期」模型的有效期窗口，
+         * 同时当天多次打开只续一次（续后剩余 7 天 > 阈值即跳过），避免频繁请求。
+         */
+        const val REFRESH_THRESHOLD_MS: Long = 6L * 24 * 60 * 60 * 1000
     }
 }

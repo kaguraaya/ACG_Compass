@@ -14,6 +14,7 @@ import com.acgcompass.core.network.SourceRequest
 import com.acgcompass.core.ui.Cta
 import com.acgcompass.core.ui.UiState
 import com.acgcompass.data.datastore.SettingsDataStore
+import com.acgcompass.data.datastore.SettingsState
 import com.acgcompass.data.local.dao.RankingCacheDao
 import com.acgcompass.data.local.dao.RatingDao
 import com.acgcompass.data.local.dao.SourceLinkDao
@@ -51,8 +52,10 @@ import com.acgcompass.domain.repository.WorkRepository
 import com.acgcompass.domain.usecase.AggregateRatingsUseCase
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
@@ -436,26 +439,41 @@ class WorkRepositoryImpl @Inject constructor(
                     entry.toEntity(id = ratingId(workId, source), workId = workId, sourceId = source),
                 )
             }
-            // #8：候选池补齐——基础榜单写入后，本地作品不足目标规模则继续分页拉 Bangumi 真实排行补齐
-            //（rankedOverall 上面已拉 0..2 页，故从第 3 页续拉）。已达标则仅一次 count 开销后跳过。
-            written += backfillCacheToTarget(startPage = 3)
+            // #8 / RC.40：候选池补齐——基础榜单写入后，本地作品不足目标规模则继续分页拉 Bangumi 真实排行补齐
+            //（rankedOverall 上面已拉 0..2 页，故从第 3 页续拉）。目标上限来自设置：用户未设（0）时
+            // 用 App 智能默认目标，设了则以其为准。已达标则仅一次 count 开销后跳过。
+            val autoCacheTarget = settingsDataStore.autoCacheMaxCount.first()
+                .let { if (it > 0) it else SettingsState.AUTO_CACHE_DEFAULT_TARGET }
+            written += backfillCacheToTarget(startPage = 3, target = autoCacheTarget)
             written
         }
     }
 
     /**
-     * #8：把本地作品候选池补齐到目标规模（默认 1000）。从 Bangumi 真实排行（`sort=rank`，高分优先）的
+     * #8 / RC.40：把本地作品候选池渐进补齐到目标规模。从 Bangumi 真实排行（`sort=rank`，高分优先）的
      * [startPage] 续拉，每页落库后重新计数；达标 / 分页到底 / 触顶页数即停。返回本次新写入条数。
+     *
+     * [target]：目标部数（来自设置的自动缓存上限；`<=0` 直接返回不缓存）。
+     *
+     * **智能限速（用户诉求）**：前 [FAST_PHASE_WORKS] 部全速无延迟（首次进入尽快铺满、不卡体验）；
+     * 越过快速阶段后按「距目标的进度」递增页间延迟（[THROTTLE_MIN_DELAY_MS]→[THROTTLE_MAX_DELAY_MS]），
+     * 越接近目标越慢，降低持续联网 / 落库的资源占用。未设上限（用默认目标）与已设上限两种情况均
+     * 沿此曲线（曲线相对 target 归一，故自适应不同上限）。
+     *
+     * **页数上限**：按 target 换算页数并留去重余量（ranked 跨源聚类后独立作品数低于抓取数），另设绝对上限
+     * [ABSOLUTE_MAX_PAGE] 防跑飞。此前固定 maxPage=30 + 去重使规模卡在约 630（<目标 1000）——本次按目标放大。
+     *
      * 任一页失败（含限流）静默跳出，不阻塞启动；下次进首页仍不足会继续渐进补齐（RC.17.4）。
      */
-    private suspend fun backfillCacheToTarget(startPage: Int): Int {
-        val targetSize = 1000
+    private suspend fun backfillCacheToTarget(startPage: Int, target: Int): Int {
+        if (target <= 0) return 0
         val pageSize = 50
-        val maxPage = 30 // 防御上限：最多拉到第 30 页（~1500），避免异常情况下持续拉取。
+        val maxPage = (startPage + Math.ceil(target / pageSize.toDouble() * DEDUP_HEADROOM).toInt() + 1)
+            .coerceAtMost(ABSOLUTE_MAX_PAGE)
         var written = 0
         var page = startPage
         var total = workDao.count()
-        while (total < targetSize && page < maxPage) {
+        while (total < target && page < maxPage) {
             val items = (
                 bangumi.searchRankedSubjects(limit = pageSize, offset = page * pageSize)
                     as? AppResult.Success
@@ -476,6 +494,14 @@ class WorkRepositoryImpl @Inject constructor(
             written += items.size
             total = workDao.count()
             page++
+            // 智能限速：越过快速阶段后按「距目标进度」递增页间延迟（越接近目标越慢，降低资源占用）。
+            if (total in FAST_PHASE_WORKS until target) {
+                val progress = ((total - FAST_PHASE_WORKS).toFloat() /
+                    (target - FAST_PHASE_WORKS).coerceAtLeast(1)).coerceIn(0f, 1f)
+                val delayMs = (THROTTLE_MIN_DELAY_MS +
+                    progress * (THROTTLE_MAX_DELAY_MS - THROTTLE_MIN_DELAY_MS)).toLong()
+                delay(delayMs)
+            }
         }
         return written
     }
@@ -890,6 +916,19 @@ class WorkRepositoryImpl @Inject constructor(
 
         /** H16：跨平台交叉验证的标题相似度阈值（高阈值避免误配，宁缺毋滥）。 */
         const val CROSS_MATCH_THRESHOLD = 0.86
+
+        /** RC.40：自动缓存去重余量系数——ranked 跨源聚类后独立作品数约为抓取数的 1/2.5，故按目标×此系数算需拉页数。 */
+        const val DEDUP_HEADROOM = 2.5
+
+        /** RC.40：自动缓存绝对页数上限（防跑飞；80 页 × 50 ≈ 4000 抓取）。 */
+        const val ABSOLUTE_MAX_PAGE = 80
+
+        /** RC.40：智能限速的快速阶段部数——前此数量全速无延迟（首次进入尽快铺满、不卡体验）。 */
+        const val FAST_PHASE_WORKS = 300
+
+        /** RC.40：越过快速阶段后的最小 / 最大页间延迟（毫秒）——按距目标进度在两者间线性递增。 */
+        const val THROTTLE_MIN_DELAY_MS = 400f
+        const val THROTTLE_MAX_DELAY_MS = 1800f
     }
 }
 

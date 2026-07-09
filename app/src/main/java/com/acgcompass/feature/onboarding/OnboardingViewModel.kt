@@ -57,8 +57,13 @@ class OnboardingViewModel @Inject constructor(
      * - [OnboardingSetup.consentToProxyToken] 决定是否允许个人 Token 发往该非官方地址（R56）：未同意时仅公共搜索经反代、Token 不发送。
      * - 持久化 `onboardingShown = true`，引导不再展示。
      */
-    fun onOnboardingComplete(setup: OnboardingSetup) {
+    fun onOnboardingComplete(setup: OnboardingSetup, onPersisted: () -> Unit = {}) {
         viewModelScope.launch {
+            // RC.40 修复「部分机型切主题/重启后又触发引导」：**先**持久化 `onboardingShown = true`——此前它是
+            // 最后一步，而调用方在 launch 之外**立即**导航离开引导页 → 引导 VM 被清 → viewModelScope 取消 →
+            // 慢 I/O 机型上该写入常在完成前被取消，标志没落盘，故只有部分品牌复现。现把它放到最前保证优先落盘，
+            // 且改由本协程在全部写入完成后再回调 [onPersisted] 触发导航（期间 VM 不会被清，写入不被取消）。
+            settingsDataStore.setOnboardingShown(true)
             // H：Bangumi 个人 Token（可选）——与既有凭据合并，仅覆盖 token（首启通常无既有值，合并仅为鲁棒）。
             val bangumiToken = setup.bangumiToken.trim().takeIf { it.isNotEmpty() }
             if (bangumiToken != null) {
@@ -79,7 +84,8 @@ class OnboardingViewModel @Inject constructor(
             }
             settingsDataStore.setBangumiApiBaseUrl(SettingsState.COMMUNITY_PROXY_BANGUMI_API_BASE_URL)
             settingsDataStore.setBangumiNonOfficialTokenConsent(setup.consentToProxyToken)
-            settingsDataStore.setOnboardingShown(true)
+            // 全部持久化完成后再离开引导页。
+            onPersisted()
         }
     }
 

@@ -22,10 +22,10 @@ class SettingsStateTest : StringSpec({
         state.onboardingShown shouldBe false
     }
 
-    "默认多源开箱：Bangumi / Jikan / VNDB 启用，AniList / MAL 需手动开启（0.15.0 起 N6）" {
+    "默认多源开箱：Bangumi / AniList / Jikan / VNDB 启用，MAL 需手动开启（0.18.5 起 AniList 默认开）" {
         val state = SettingsState()
         state.bangumiEnabled shouldBe true
-        state.anilistEnabled shouldBe false
+        state.anilistEnabled shouldBe true
         state.jikanEnabled shouldBe true
         state.malEnabled shouldBe false
         state.vndbEnabled shouldBe true

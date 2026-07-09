@@ -17,6 +17,16 @@ val acgLocalProperties = Properties().apply {
 }
 fun acgLocalProp(key: String): String = (acgLocalProperties.getProperty(key) ?: "").trim()
 
+// RC.41 发行版签名：从 gitignored 的 keystore.properties 读取签名凭据（storeFile / storePassword /
+// keyAlias / keyPassword）。不进源码、不进 git（.gitignore 已忽略 keystore.properties 与 *.jks/*.keystore）。
+// storeFile 相对项目根解析（也支持绝对路径）。缺失（如克隆者 / CI 无密钥）时 release 保持未签名，构建不中断。
+val keystoreProperties = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+val releaseKeystoreFile = keystoreProperties.getProperty("storeFile")?.let { rootProject.file(it) }
+val hasReleaseSigning = releaseKeystoreFile?.exists() == true
+
 android {
     namespace = "com.acgcompass"
     compileSdk = 34
@@ -25,8 +35,8 @@ android {
         applicationId = "com.acgcompass"
         minSdk = 26
         targetSdk = 34
-        versionCode = 25
-        versionName = "0.18.4"
+        versionCode = 26
+        versionName = "0.18.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -54,8 +64,24 @@ android {
         }
     }
 
+    signingConfigs {
+        // 仅当 keystore.properties 及其指向的密钥库文件都存在时才创建 release 签名配置。
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = releaseKeystoreFile
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            // 有密钥时启用签名；无密钥时 release 保持未签名（不阻断无密钥环境的构建）。
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

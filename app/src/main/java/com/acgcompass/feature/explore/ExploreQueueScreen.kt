@@ -68,6 +68,12 @@ import kotlin.math.roundToInt
 const val EXPLORE_QUEUE_ROUTE: String = "explore_queue"
 
 /**
+ * items 9/10：探索卡封面高度。Crop 只取封面中的一段（不把整张封面铺满卡片），为标题/匹配度/理由/标签
+ * 留出空间，整体更「卡片」而非「大图」，兼顾美观。正反面一致。
+ */
+private val FRONT_COVER_HEIGHT = 176.dp
+
+/**
  * 探索队列路由入口：连接 [ExploreQueueViewModel]，把状态与回调下发给无状态 [ExploreQueueScreen]。
  *
  * @param onOpenWork 点击卡片进入作品详情。
@@ -262,20 +268,33 @@ private fun ReadyContent(
     }
 }
 
-/** D：卡片正面——封面 + 口味匹配度（视觉核心）+ 推荐理由 + 标签；底部提示可单击翻面看简介。 */
+/**
+ * D：卡片正面——封面 + 口味匹配度（视觉核心）+ 推荐理由 + 标签；底部操作提示固定在卡片底部。
+ *
+ * items 9/10 布局：外层 Column 填满卡片，分三段——① 封面固定顶部（[FRONT_COVER_HEIGHT]，Crop 只取一段、
+ * 不铺满整卡，兼顾卡片美观）；② 中部信息区 `weight(1f)` 可竖向滚动（内容短时留白居上、长时滚动）；
+ * ③ 操作提示 Row 固定在最底部——**不再**随内容流式紧贴内容下方（此前内容少时提示浮在中间的问题）。
+ */
 @Composable
 private fun ExploreCardFront(card: ExploreCardUiModel) {
-    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+    Column(modifier = Modifier.fillMaxSize()) {
         AsyncImage(
             model = card.coverUrl,
             contentDescription = card.title,
             contentScale = ContentScale.Crop,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(220.dp)
+                .height(FRONT_COVER_HEIGHT)
                 .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)),
         )
-        Column(modifier = Modifier.padding(16.dp)) {
+        // 中部信息区：占据封面与底部提示之间的剩余空间，内容过长时在此滚动（item 9：不挤动底部提示）。
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(start = 16.dp, end = 16.dp, top = 16.dp),
+        ) {
             Text(card.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             if (card.meta.isNotBlank()) {
                 Spacer(Modifier.height(4.dp))
@@ -310,31 +329,33 @@ private fun ExploreCardFront(card: ExploreCardUiModel) {
                 TagRow(card.tags)
             }
             Spacer(Modifier.height(12.dp))
-            // C4：底部提示三段错开——左滑靠左 / 点击居中 / 右滑靠右，与手势方向一一对应，避免长句换行。
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    "← 左滑暂不",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
-                Text(
-                    "点击看简介",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
-                Text(
-                    "右滑加入 →",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
-            }
+        }
+        // C4 / item 9：底部提示固定在卡片底部——左滑靠左 / 点击居中 / 右滑靠右，与手势方向一一对应。
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "← 左滑暂不",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+            Text(
+                "点击看简介",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+            Text(
+                "右滑加入 →",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
         }
     }
 }
@@ -349,7 +370,7 @@ private fun ExploreCardBack(card: ExploreCardUiModel, onOpenWork: (String) -> Un
             contentScale = ContentScale.Crop,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(220.dp)
+                .height(FRONT_COVER_HEIGHT)
                 .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)),
         )
         Column(modifier = Modifier.padding(16.dp)) {

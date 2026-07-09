@@ -678,24 +678,25 @@ private object SourceDescriptors {
             fieldDefs = listOf(
                 CredentialFieldState(
                     key = CredentialFieldKey.TOKEN,
-                    label = "Access Token（手动粘贴，可选）",
+                    // item 12：不再在 label 里写「可选」——UI 对 optional 字段已统一追加「（可选）」，避免重复。
+                    label = "Access Token（手动登录用）",
                     sensitive = true,
                     optional = true,
-                    placeholder = "可直接粘贴 Token；或用下方 OAuth 登录",
+                    placeholder = "粘贴 Token 即可登录；或用下方「用 Bangumi 登录」",
                 ),
                 CredentialFieldState(
                     key = CredentialFieldKey.CLIENT_ID,
-                    label = "App ID（OAuth，可选）",
+                    label = "App ID（高级·自建应用）",
                     sensitive = true,
                     optional = true,
-                    placeholder = "在 bgm.tv/dev/app 注册应用获取",
+                    placeholder = "仅自建 OAuth 应用才需要，一般留空",
                 ),
                 CredentialFieldState(
                     key = CredentialFieldKey.CLIENT_SECRET,
-                    label = "App Secret（OAuth，可选）",
+                    label = "App Secret（高级·自建应用）",
                     sensitive = true,
                     optional = true,
-                    placeholder = "在 bgm.tv/dev/app 注册应用获取",
+                    placeholder = "仅自建 OAuth 应用才需要，一般留空",
                 ),
             ),
             toggleDefs = listOf(
@@ -707,9 +708,12 @@ private object SourceDescriptors {
                 ),
             ),
             infoNotes = listOf(
-                "Bangumi 为中文主数据源，需在请求头携带合规 User-Agent。",
-                "本应用已内置 Bangumi OAuth 应用，通常直接点「用 Bangumi 登录」即可、无需填写下方字段。登录后 token 会在到期前自动续期。",
-                "高级/自托管：如需改用你自己注册的应用，在 bgm.tv/dev/app 注册（回调地址填 acgcompass://oauth/bangumi/callback），把 App ID/Secret 填入上方并保存即可覆盖内置值。",
+                // item 13：点明「登录只需 Access Token 或 OAuth 二选一」，App ID/Secret 并非必需、仅高级用途。
+                "登录二选一：点下方「用 Bangumi 登录」（已内置应用、最省事），或手动粘贴上方 Access Token。App ID / Secret 仅在改用你自己注册的 OAuth 应用时才需要，普通使用留空即可。",
+                // item 14：OAuth 需要能访问 bgm.tv 的网络环境。
+                "「用 Bangumi 登录」（OAuth）需要能正常访问 bgm.tv 的网络环境，部分网络下需特殊网络环境才能完成登录。",
+                // item 14：引导个人令牌页获取长效 token（OAuth token 固定约 7 天，靠打开应用续期）。
+                "想要长期有效的登录：可在 next.bgm.tv/demo/access-token 生成较长有效期的个人令牌，粘贴到上方 Access Token 即可（OAuth 登录的 token 约 7 天，靠每次打开应用自动续期）。",
             ),
             showUsername = true,
             publicSearchAvailable = true,

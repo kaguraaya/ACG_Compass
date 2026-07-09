@@ -64,8 +64,9 @@ fun OnboardingRoute(
     OnboardingScreen(
         state = OnboardingUiState.DEFAULT,
         onConfirm = { setup ->
-            viewModel.onOnboardingComplete(setup)
-            onFinished()
+            // RC.40：把导航离开作为「持久化完成」回调传入——只有 onboardingShown 等写入全部落盘后才离开引导页，
+            // 避免引导 VM 被清导致写入被取消（部分机型 I/O 慢时会「切主题/重启后又触发引导」）。
+            viewModel.onOnboardingComplete(setup, onPersisted = onFinished)
         },
         modifier = modifier,
     )

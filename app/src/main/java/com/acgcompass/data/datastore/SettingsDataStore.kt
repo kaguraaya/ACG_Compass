@@ -142,13 +142,25 @@ class SettingsDataStore @Inject constructor(
         dataStore.edit { it[Keys.TASTE_MATCH_THRESHOLD] = threshold.coerceIn(0f, 1f) }
     }
 
-    /** I17：待补池展示形态偏好——true=网格，false=列表。默认列表。 */
+    /** I17：待补池展示形态偏好——true=网格，false=列表。RC.40：默认网格（用户诉求，卡片式浏览更直观）。 */
     val backlogGridMode: Flow<Boolean> =
-        dataStore.data.map { it[Keys.BACKLOG_GRID_MODE] ?: false }
+        dataStore.data.map { it[Keys.BACKLOG_GRID_MODE] ?: true }
 
     /** I17：持久化待补池网格/列表展示形态。 */
     suspend fun setBacklogGridMode(grid: Boolean) {
         dataStore.edit { it[Keys.BACKLOG_GRID_MODE] = grid }
+    }
+
+    /**
+     * RC.40：番剧信息自动缓存目标上限（部数）。0 = 未设置（由 App 智能决定，用 [SettingsState.AUTO_CACHE_DEFAULT_TARGET]）。
+     * 仅影响「公共发现池番剧信息」自动缓存规模，不影响封面等其他缓存。
+     */
+    val autoCacheMaxCount: Flow<Int> =
+        dataStore.data.map { it[Keys.AUTO_CACHE_MAX_COUNT] ?: SettingsState.DEFAULT_AUTO_CACHE_MAX_COUNT }
+
+    /** RC.40：设置番剧信息自动缓存目标上限（部数）；负数钳为 0（未设置=App 决定）。 */
+    suspend fun setAutoCacheMaxCount(count: Int) {
+        dataStore.edit { it[Keys.AUTO_CACHE_MAX_COUNT] = count.coerceAtLeast(0) }
     }
 
     /** #10：最近搜索历史（最新在前，最多 [MAX_SEARCH_HISTORY] 条）。以换行分隔持久化、读时清洗空项。 */
@@ -306,6 +318,7 @@ class SettingsDataStore @Inject constructor(
             autoSyncIntervalMinutes = this[Keys.AUTO_SYNC_INTERVAL_MINUTES] ?: SettingsState.DEFAULT_AUTO_SYNC_INTERVAL_MINUTES,
             recommendMinCommunityScore = this[Keys.RECOMMEND_MIN_COMMUNITY_SCORE] ?: SettingsState.DEFAULT_RECOMMEND_MIN_COMMUNITY_SCORE,
             tasteMatchThreshold = this[Keys.TASTE_MATCH_THRESHOLD] ?: SettingsState.DEFAULT_TASTE_MATCH_THRESHOLD,
+            autoCacheMaxCount = this[Keys.AUTO_CACHE_MAX_COUNT] ?: SettingsState.DEFAULT_AUTO_CACHE_MAX_COUNT,
         )
 
     /** 归一化 Base URL（R55）：trim、空白回退官方、补结尾斜杠。不校验可达性（由连接测试负责）。 */
@@ -336,6 +349,7 @@ class SettingsDataStore @Inject constructor(
         val BACKLOG_GRID_MODE = booleanPreferencesKey("backlog_grid_mode")
         val RECOMMEND_MIN_COMMUNITY_SCORE = floatPreferencesKey("recommend_min_community_score")
         val TASTE_MATCH_THRESHOLD = floatPreferencesKey("taste_match_threshold")
+        val AUTO_CACHE_MAX_COUNT = intPreferencesKey("auto_cache_max_count")
         val SEARCH_HISTORY = stringPreferencesKey("search_history")
         val BANGUMI_USERNAME = stringPreferencesKey("bangumi_username")
         val RECENTLY_VIEWED = stringPreferencesKey("recently_viewed_work_ids")

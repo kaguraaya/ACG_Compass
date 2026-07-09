@@ -361,17 +361,25 @@ class RecommenderViewModel @Inject constructor(
             }
         }
 
-        // N5 质量护栏 + 兜底（修「关了口味限制、且选了待补池里确有的标签，仍一个都推不出」）：
-        // 1) 社区分下限：有评分则须 >= minScore；无评分（null）放行。
-        // 2) 口味下限：**尊重用户关闭**——阈值=0（关闭）时不施加任何口味下限（此前强加 0.45 使关闭形同虚设）。
-        // 3) 逐级放宽兜底：命中所选标签的候选不得被护栏清空——先按双下限筛，空则去掉口味下限，再空则仅用标签硬筛结果。
+        // N5 质量护栏：
+        // 1) 社区分下限：有评分则须 >= minScore；无评分（null）放行。可作为软护栏在口味达标集合内兜底放宽。
+        // 2) 口味下限：**尊重用户关闭**——阈值=0（关闭）时不施加任何口味下限（此前强加 0.45 使关闭形同虚设）；
+        //    阈值>0 时为**硬**约束（用户诉求「低于则不推」），绝不因兜底放宽（详见下方）。
         val tasteFloor = tasteThreshold.coerceAtLeast(0f)
         fun passesCommunity(s: Scored): Boolean = s.mean10 == null || s.mean10 >= minScore
         fun passesTaste(s: Scored): Boolean =
             tasteFloor <= 0f || !s.tasteAvailable || s.tasteFraction == null || s.tasteFraction >= tasteFloor
-        val filtered = ranked.filter { passesCommunity(it) && passesTaste(it) }
-            .ifEmpty { ranked.filter { passesCommunity(it) } }
-            .ifEmpty { ranked }
+        // N5 修复（用户诉求「低于口味匹配度阈值则不推」）：口味下限为**硬**约束，绝不因兜底放宽。
+        // 此前 `.ifEmpty { ranked.filter { passesCommunity } }.ifEmpty { ranked }` 会在无达标作品时丢掉口味
+        // 下限，导致阈值设 75% 却仍推 60~70% 的作品（而社区分下限因在兜底链中保留、显得「严格遵守」，
+        // 两者观感不一致正是本 bug 的表现）。现改为：先按口味下限**硬筛**，无达标则返回专门空态提示调低阈值；
+        // 社区分下限仅在「已达口味阈值」的集合内作为软护栏可兜底放宽（无评分作品本就放行）。
+        val tasteEligible = ranked.filter { passesTaste(it) }
+        if (tasteEligible.isEmpty()) {
+            return UiState.Empty(if (tasteFloor > 0f) TASTE_FLOOR_CTA else NO_CANDIDATE_CTA)
+        }
+        val filtered = tasteEligible.filter { passesCommunity(it) }
+            .ifEmpty { tasteEligible }
             .sortedByDescending { it.combined }
         if (filtered.isEmpty()) return UiState.Empty(NO_CANDIDATE_CTA)
 
@@ -510,6 +518,12 @@ class RecommenderViewModel @Inject constructor(
 
         /** 无满足条件候选时的空态：引导用户调整条件或补充待补池。 */
         val NO_CANDIDATE_CTA = Cta(label = "换个条件，或先去补充待补池", action = "adjust")
+
+        /**
+         * N5：设了口味匹配度阈值但无作品达标时的空态——提示调低阈值（不再退回推荐低于阈值的作品）。
+         * 与 [NO_CANDIDATE_CTA] 区分，让用户明确是「阈值太高」而非「没候选」。
+         */
+        val TASTE_FLOOR_CTA = Cta(label = "没有达到口味匹配度阈值的作品，可到设置调低阈值", action = "adjust")
 
         /** K2：全部作品池融入评分时，先按口味取的候选规模（之后用本地缓存评分二次排序）。 */
         const val RATING_BLEND_POOL = 30

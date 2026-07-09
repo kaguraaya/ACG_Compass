@@ -63,6 +63,11 @@ data class SettingsState(
     val recommendMinCommunityScore: Float = DEFAULT_RECOMMEND_MIN_COMMUNITY_SCORE,
     /** Phase④：口味匹配度阈值（0~1）。低于此匹配度的作品不进入推荐（相当于自动重 roll）；0 = 关闭该过滤。 */
     val tasteMatchThreshold: Float = DEFAULT_TASTE_MATCH_THRESHOLD,
+    /**
+     * RC.40：番剧信息自动缓存的目标上限（部数）。`0` = 未设置（由 App 智能决定，用 [AUTO_CACHE_DEFAULT_TARGET]）。
+     * **仅**影响「公共发现池番剧信息」的自动缓存规模，不影响封面图等其他方式产生的缓存。
+     */
+    val autoCacheMaxCount: Int = DEFAULT_AUTO_CACHE_MAX_COUNT,
 ) {
     /** 当前 Bangumi API 是否为官方地址。 */
     val isBangumiOfficialApi: Boolean
@@ -72,7 +77,7 @@ data class SettingsState(
         const val DEFAULT_ALLOW_AI_ANALYZE_REVIEWS = false
         const val DEFAULT_RECORD_TIME_MACHINE_SNAPSHOTS = true
         const val DEFAULT_BANGUMI_ENABLED = true
-        const val DEFAULT_ANILIST_ENABLED = false
+        const val DEFAULT_ANILIST_ENABLED = true
         const val DEFAULT_JIKAN_ENABLED = true
         const val DEFAULT_MAL_ENABLED = false
         const val DEFAULT_VNDB_ENABLED = true
@@ -101,5 +106,14 @@ data class SettingsState(
          * 即置 0 → 推荐器**真正**不施加口味下限（N5 修复：此前「关闭」被强制回落 0.45 形同虚设）。
          */
         const val DEFAULT_TASTE_MATCH_THRESHOLD = 0.4f
+
+        /** RC.40：番剧信息自动缓存目标上限默认 `0` = 未设置（由 App 智能决定，用 [AUTO_CACHE_DEFAULT_TARGET]）。 */
+        const val DEFAULT_AUTO_CACHE_MAX_COUNT = 0
+
+        /**
+         * RC.40：未设置缓存上限时 App 智能决定的默认目标部数（此前硬编码在仓库层的 1000）。
+         * 用户在设置里显式填写上限则以其为准。
+         */
+        const val AUTO_CACHE_DEFAULT_TARGET = 1000
     }
 }

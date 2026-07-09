@@ -201,9 +201,16 @@ class DiscoverViewModel @Inject constructor(
                 initialValue = emptyList(),
             )
 
-    /** 当前作品集合可选的筛选取值（年份 / 篇幅 / 风险 / 心情标签，RC.05.06）。 */
+    /**
+     * items 4/6：筛选页作品快照。进入筛选 Tab / 手动刷新时取一次「已缓存作品 + 缓存评分」快照并**洗牌**，
+     * 之后**不**随公共池缓存写库持续刷新——既消除「停留在筛选页时队列一直刷新」的观感（item 4），
+     * 又让每次进入筛选看到的作品有变化、不固定显示同几部（item 6）。由 [refreshFilterSnapshot] 填充。
+     */
+    private val _filterSnapshot = MutableStateFlow<List<WorkRatings>>(emptyList())
+
+    /** 当前作品集合可选的筛选取值（年份 / 篇幅 / 风险 / 心情标签，RC.05.06）。基于快照，避免缓存写库时选项抖动。 */
     val filterFacets: StateFlow<FilterFacets> =
-        worksWithRatings
+        _filterSnapshot
             .map { buildFilterFacets(it) }
             .stateIn(
                 scope = viewModelScope,
@@ -213,13 +220,27 @@ class DiscoverViewModel @Inject constructor(
 
     /** 应用高级筛选后的作品卡片列表（RC.05.06）。Q18：携带真实 work id 用于跳转（修复点开「暂无内容」）。 */
     val filteredCards: StateFlow<List<RankedWork>> =
-        combine(worksWithRatings, _filter) { works, filter ->
+        combine(_filterSnapshot, _filter) { works, filter ->
             applyFilter(works, filter).map { RankedWork(it.work.id, it.toFilteredCard()) }
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS),
             initialValue = emptyList(),
         )
+
+    /**
+     * items 4/6：刷新筛选页快照（洗牌）。首次进入 / 每次重进筛选 Tab / 公共池加载完成后调用。
+     * 直接从 Room 取一次当前已缓存作品并算缓存评分（**不**订阅其后续变化，故缓存写库不再触发筛选页刷新），
+     * 再洗牌 → 每次进入筛选内容有变化。旧快照在重算期间保留，避免刷新瞬间空屏。
+     */
+    fun refreshFilterSnapshot() {
+        viewModelScope.launch {
+            val works = runCatching { workRepository.observeWorks().first() }.getOrDefault(emptyList())
+            _filterSnapshot.value = works
+                .map { WorkRatings(work = it, ratings = workRepository.aggregateRatingsCached(it.id)) }
+                .shuffled()
+        }
+    }
 
     /** 切换发现页分区。 */
     fun onTabSelect(tab: DiscoverTab) {
@@ -238,6 +259,10 @@ class DiscoverViewModel @Inject constructor(
         // D9：进入评分差异页时按需回填第二来源评分（内部自等公共池就绪），使差异榜不再恒空。
         if (tab == DiscoverTab.SCORE_DIFF) {
             backfillScoreDiffRatings()
+        }
+        // items 4/6：每次进入筛选 Tab 重取并洗牌快照——内容有变化、且不随后续缓存写库持续刷新。
+        if (tab == DiscoverTab.FILTER) {
+            refreshFilterSnapshot()
         }
     }
 
@@ -417,6 +442,8 @@ class DiscoverViewModel @Inject constructor(
             when (val r = workRepository.loadPublicDiscovery()) {
                 is AppResult.Success -> {
                     publicPoolLoadedOnce = true
+                    // items 4/6：公共池写库完成后刷新一次筛选快照，使首次进入筛选即有（洗牌后的）内容。
+                    if (_tab.value == DiscoverTab.FILTER) refreshFilterSnapshot()
                 }
                 is AppResult.Failure -> {
                     _poolError.value = r.error.cause
